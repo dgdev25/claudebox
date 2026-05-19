@@ -1,0 +1,1 @@
+/Users/lyle.degroot/dev/claudebox/.worktrees/implement/target/debug/libclaudebox_ebpf.rlib: /Users/lyle.degroot/dev/claudebox/.worktrees/implement/crates/claudebox-ebpf/src/compiler.rs /Users/lyle.degroot/dev/claudebox/.worktrees/implement/crates/claudebox-ebpf/src/lib.rs

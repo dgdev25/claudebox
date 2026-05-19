@@ -1,0 +1,1 @@
+/Users/lyle.degroot/dev/claudebox/.worktrees/implement/target/debug/libclaudebox_witness.rlib: /Users/lyle.degroot/dev/claudebox/.worktrees/implement/crates/claudebox-witness/src/compaction.rs /Users/lyle.degroot/dev/claudebox/.worktrees/implement/crates/claudebox-witness/src/lib.rs /Users/lyle.degroot/dev/claudebox/.worktrees/implement/crates/claudebox-witness/src/writer.rs

@@ -1,0 +1,1 @@
+unsafe extern "system" fn(*mut OrtSessionOptions, ort_sys::GraphOptimizationLevel) -> OrtStatusPtr
