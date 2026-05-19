@@ -12,7 +12,7 @@ pub fn check_dependencies() -> Result<()> {
     Ok(())
 }
 
-pub fn check_single_dep(name: &str, min_version: &str) -> Result<()> {
+pub fn check_single_dep(name: &str, _min_version: &str) -> Result<()> {
     use std::process::Command;
     Command::new(name)
         .arg("--version")
@@ -23,8 +23,7 @@ pub fn check_single_dep(name: &str, min_version: &str) -> Result<()> {
                 name
             )
         })?;
-    // version check is best-effort; log if parse fails
-    let _ = min_version; // version enforcement future work
+    // version enforcement is future work; _min_version intentionally unused
     Ok(())
 }
 
