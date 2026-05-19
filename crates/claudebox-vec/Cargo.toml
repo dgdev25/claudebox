@@ -2,3 +2,25 @@
 name = "claudebox-vec"
 version = "0.1.0"
 edition = "2021"
+
+[features]
+# Gate the fastembed/ORT dependency behind an opt-in feature so that unit tests
+# (which never instantiate TextEmbedding) compile without pulling in the large
+# ONNX Runtime build chain or triggering the ~25 MB model download.
+embed = ["dep:fastembed"]
+
+[dependencies]
+claudebox-core = { path = "../claudebox-core" }
+claudebox-witness = { path = "../claudebox-witness" }
+claudebox-meta = { path = "../claudebox-meta" }
+fastembed = { workspace = true, optional = true }
+rvf-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
