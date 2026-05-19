@@ -60,11 +60,16 @@ pub struct ClaudeBoxConfig {
 }
 
 impl ClaudeBoxConfig {
+    /// Path to the user's config file: `~/.claudebox/config.toml`.
+    fn config_path() -> anyhow::Result<std::path::PathBuf> {
+        let home = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+        Ok(home.join(".claudebox/config.toml"))
+    }
+
     /// Load from `~/.claudebox/config.toml`, falling back to defaults if absent.
     pub fn load() -> anyhow::Result<Self> {
-        let path = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
-            .join(".claudebox/config.toml");
+        let path = Self::config_path()?;
         match std::fs::read_to_string(&path) {
             Ok(content) => toml::from_str(&content)
                 .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display())),
@@ -75,9 +80,7 @@ impl ClaudeBoxConfig {
 
     /// Write to `~/.claudebox/config.toml`, creating directories if needed.
     pub fn save(&self) -> anyhow::Result<()> {
-        let path = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
-            .join(".claudebox/config.toml");
+        let path = Self::config_path()?;
         let parent = path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("config path has no parent directory"))?;
