@@ -145,6 +145,7 @@ fn event_type_label(event: &WitnessEvent) -> &'static str {
         WitnessEvent::WitnessCompact { .. } => "WITNESS_COMPACT",
         WitnessEvent::VecReconcile { .. } => "VEC_RECONCILE",
         WitnessEvent::FormatMigrate { .. } => "FORMAT_MIGRATE",
+        WitnessEvent::AllowlistUpdate { .. } => "ALLOWLIST_UPDATE",
     }
 }
 
@@ -175,6 +176,9 @@ fn event_details(event: &WitnessEvent) -> String {
         WitnessEvent::VecReconcile { files_removed } => format!("{} files removed", files_removed),
         WitnessEvent::FormatMigrate { from_version, to_version } => {
             format!("v{} → v{}", from_version, to_version)
+        }
+        WitnessEvent::AllowlistUpdate { added, removed } => {
+            format!("+{} -{}", added.len(), removed.len())
         }
     }
 }

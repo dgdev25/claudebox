@@ -1,4 +1,7 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
+
+use crate::WitnessEntry;
 
 /// Lightweight metadata used for partitioning without loading full entry payloads.
 #[derive(Debug, Clone)]
@@ -67,28 +70,231 @@ pub fn partition_entries(
 impl WitnessCompactor {
     /// Check whether compaction is needed and compact if so.
     ///
-    /// Stub: calls `partition_entries` logic but performs no disk I/O.
-    /// Full implementation deferred to Phase 11.
+    /// Reads the `.witness` JSONL sidecar, partitions by `policy.max_entries`,
+    /// and if there are entries to archive: writes old entries to a dated JSONL
+    /// file in `archive_dir` and rewrites the sidecar with only the kept entries.
     pub fn compact_if_needed(&self) -> anyhow::Result<CompactionResult> {
-        // Noop stub — no entries to read yet.
+        let entries = self.load_entries()?;
+        let meta: Vec<WitnessEntryMeta> = entries
+            .iter()
+            .map(|e| WitnessEntryMeta { seq: e.seq, ts_nanos: e.ts_nanos })
+            .collect();
+
+        let (keep_meta, archive_meta) = partition_entries(&meta, &self.policy);
+
+        if archive_meta.is_empty() {
+            return Ok(CompactionResult {
+                entries_archived: 0,
+                entries_kept: entries.len() as u32,
+                archive_path: None,
+            });
+        }
+
+        let keep_seqs: HashSet<u64> = keep_meta.iter().map(|e| e.seq).collect();
+        let (keep_entries, archive_entries): (Vec<_>, Vec<_>) =
+            entries.into_iter().partition(|e| keep_seqs.contains(&e.seq));
+
+        let archive_path = self.write_archive(&archive_entries)?;
+        self.write_witness(&keep_entries)?;
+
         Ok(CompactionResult {
-            entries_archived: 0,
-            entries_kept: 0,
-            archive_path: None,
+            entries_archived: archive_entries.len() as u32,
+            entries_kept: keep_entries.len() as u32,
+            archive_path: Some(archive_path),
         })
     }
 
     /// Force compaction regardless of whether it is needed.
     ///
-    /// Stub: same as `compact_if_needed` until Phase 11.
+    /// Rewrites the witness sidecar even when the entry count is under the limit.
+    /// Useful for defragmentation or after manual edits.
     pub fn force_compact(&self) -> anyhow::Result<CompactionResult> {
-        self.compact_if_needed()
+        let entries = self.load_entries()?;
+        if entries.is_empty() {
+            return Ok(CompactionResult { entries_archived: 0, entries_kept: 0, archive_path: None });
+        }
+
+        let meta: Vec<WitnessEntryMeta> = entries
+            .iter()
+            .map(|e| WitnessEntryMeta { seq: e.seq, ts_nanos: e.ts_nanos })
+            .collect();
+
+        let (keep_meta, archive_meta) = partition_entries(&meta, &self.policy);
+
+        let keep_seqs: HashSet<u64> = keep_meta.iter().map(|e| e.seq).collect();
+        let (keep_entries, archive_entries): (Vec<_>, Vec<_>) =
+            entries.into_iter().partition(|e| keep_seqs.contains(&e.seq));
+
+        let archive_path = if !archive_meta.is_empty() {
+            Some(self.write_archive(&archive_entries)?)
+        } else {
+            None
+        };
+
+        self.write_witness(&keep_entries)?;
+
+        Ok(CompactionResult {
+            entries_archived: archive_entries.len() as u32,
+            entries_kept: keep_entries.len() as u32,
+            archive_path,
+        })
+    }
+
+    fn witness_path(&self) -> PathBuf {
+        PathBuf::from(format!("{}.witness", self.rvf_path.display()))
+    }
+
+    fn load_entries(&self) -> anyhow::Result<Vec<WitnessEntry>> {
+        crate::read_jsonl_entries(&self.witness_path())
+    }
+
+    fn write_witness(&self, entries: &[WitnessEntry]) -> anyhow::Result<()> {
+        let path = self.witness_path();
+        let mut lines = Vec::with_capacity(entries.len());
+        for e in entries {
+            lines.push(
+                serde_json::to_string(e)
+                    .map_err(|e| anyhow::anyhow!("witness serialisation failed: {e}"))?,
+            );
+        }
+        std::fs::write(&path, lines.join("\n") + "\n")
+            .map_err(|e| anyhow::anyhow!("failed to write witness file: {e}"))
+    }
+
+    fn write_archive(&self, entries: &[WitnessEntry]) -> anyhow::Result<PathBuf> {
+        std::fs::create_dir_all(&self.archive_dir)
+            .map_err(|e| anyhow::anyhow!("failed to create archive dir: {e}"))?;
+
+        let epoch_secs = entries
+            .last()
+            .map_or(0, |e| e.ts_nanos / 1_000_000_000);
+        let name = format!("witness-archive-{epoch_secs}.jsonl");
+        let path = self.archive_dir.join(name);
+
+        let mut lines = Vec::with_capacity(entries.len());
+        for e in entries {
+            lines.push(
+                serde_json::to_string(e)
+                    .map_err(|e| anyhow::anyhow!("archive serialisation failed: {e}"))?,
+            );
+        }
+        std::fs::write(&path, lines.join("\n") + "\n")
+            .map_err(|e| anyhow::anyhow!("failed to write archive: {e}"))?;
+
+        Ok(path)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{WitnessEvent, writer::WitnessWriter};
+    use ed25519_dalek::SigningKey;
+    use rand::thread_rng;
+    use tempfile::tempdir;
+
+    fn make_witness_file(path: &std::path::Path, count: usize) {
+        let key = SigningKey::generate(&mut thread_rng());
+        let mut entries = Vec::new();
+        let genesis = WitnessWriter::create_genesis(
+            &key, WitnessEvent::Boot { project_id: "test".into() },
+        ).unwrap();
+        entries.push(genesis);
+        for i in 1..count {
+            let prev = &entries[i - 1].clone();
+            let next = WitnessWriter::create_next(
+                &key, prev, WitnessEvent::Command { cmd: format!("cmd-{i}"), exit_code: 0 },
+            ).unwrap();
+            entries.push(next);
+        }
+        let lines: Vec<String> = entries.iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect();
+        std::fs::write(path, lines.join("\n") + "\n").unwrap();
+    }
+
+    #[test]
+    fn test_compact_if_needed_archives_over_limit_entries() {
+        let dir = tempdir().unwrap();
+        let rvf = dir.path().join("test.rvf");
+        let witness = dir.path().join("test.rvf.witness");
+        make_witness_file(&witness, 120);
+
+        let compactor = WitnessCompactor {
+            rvf_path: rvf.clone(),
+            policy: WitnessPolicy { max_entries: 100, retention_days: 30 },
+            archive_dir: dir.path().join("archives"),
+        };
+        let result = compactor.compact_if_needed().unwrap();
+        assert_eq!(result.entries_kept, 100);
+        assert_eq!(result.entries_archived, 20);
+        assert!(result.archive_path.is_some());
+
+        let kept_content = std::fs::read_to_string(&witness).unwrap();
+        let kept_count = kept_content.lines().filter(|l| !l.is_empty()).count();
+        assert_eq!(kept_count, 100);
+    }
+
+    #[test]
+    fn test_compact_if_needed_noop_when_under_limit() {
+        let dir = tempdir().unwrap();
+        let rvf = dir.path().join("test.rvf");
+        let witness = dir.path().join("test.rvf.witness");
+        make_witness_file(&witness, 50);
+
+        let compactor = WitnessCompactor {
+            rvf_path: rvf,
+            policy: WitnessPolicy { max_entries: 100, retention_days: 30 },
+            archive_dir: dir.path().join("archives"),
+        };
+        let result = compactor.compact_if_needed().unwrap();
+        assert_eq!(result.entries_archived, 0);
+        assert_eq!(result.entries_kept, 50);
+        assert!(result.archive_path.is_none());
+    }
+
+    #[test]
+    fn test_force_compact_rewrites_witness_file() {
+        let dir = tempdir().unwrap();
+        let rvf = dir.path().join("test.rvf");
+        let witness = dir.path().join("test.rvf.witness");
+        make_witness_file(&witness, 50);
+
+        // Append a trailing blank line so we can prove the file was rewritten
+        // (the rewrite path normalises blank lines away).
+        let original = std::fs::read_to_string(&witness).unwrap();
+        std::fs::write(&witness, format!("{original}\n\n")).unwrap();
+        let original_len = std::fs::metadata(&witness).unwrap().len();
+
+        let compactor = WitnessCompactor {
+            rvf_path: rvf,
+            policy: WitnessPolicy { max_entries: 100, retention_days: 30 },
+            archive_dir: dir.path().join("archives"),
+        };
+        let result = compactor.force_compact().unwrap();
+        assert_eq!(result.entries_kept, 50);
+        assert_eq!(result.entries_archived, 0);
+
+        let new_len = std::fs::metadata(&witness).unwrap().len();
+        assert!(new_len < original_len, "force_compact should normalise the file");
+
+        // And the rewritten content is still parseable as 50 entries.
+        let kept = crate::read_jsonl_entries(&witness).unwrap();
+        assert_eq!(kept.len(), 50);
+    }
+
+    #[test]
+    fn test_compact_if_needed_no_file_returns_empty() {
+        let dir = tempdir().unwrap();
+        let compactor = WitnessCompactor {
+            rvf_path: dir.path().join("missing.rvf"),
+            policy: WitnessPolicy { max_entries: 100, retention_days: 30 },
+            archive_dir: dir.path().join("archives"),
+        };
+        let result = compactor.compact_if_needed().unwrap();
+        assert_eq!(result.entries_archived, 0);
+        assert_eq!(result.entries_kept, 0);
+    }
 
     #[test]
     fn test_compaction_partitions_correctly() {
@@ -128,26 +334,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_compaction_result_counts_archived_entries() {
-        let result = CompactionResult {
-            entries_archived: 2_000,
-            entries_kept: 10_000,
-            archive_path: Some(std::path::PathBuf::from("/tmp/witness-2026-04.rvf")),
-        };
-        assert_eq!(result.entries_archived, 2_000);
-        assert_eq!(result.entries_kept, 10_000);
-        assert!(result.archive_path.is_some());
-    }
-
-    #[test]
-    fn test_compaction_noop_result_when_under_limit() {
-        let result = CompactionResult {
-            entries_archived: 0,
-            entries_kept: 50,
-            archive_path: None,
-        };
-        assert_eq!(result.entries_archived, 0);
-        assert!(result.archive_path.is_none());
-    }
 }
