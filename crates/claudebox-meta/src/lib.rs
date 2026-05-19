@@ -1,3 +1,5 @@
+pub mod hooks;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
