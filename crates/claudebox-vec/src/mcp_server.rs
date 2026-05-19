@@ -58,18 +58,57 @@ pub fn filter_tombstoned(chunks: Vec<ChunkRecord>) -> Vec<ChunkRecord> {
     chunks.into_iter().filter(|c| !c.tombstoned).collect()
 }
 
-/// Embed `query`, perform an HNSW top-k search, and return live chunks.
+/// Search the workspace for chunks matching `query` and return the top `k`
+/// non-tombstoned results.
 ///
-/// **Requires** the `embed` feature (fastembed + ONNX Runtime). Deferred to
-/// the Phase 8 integration wiring.
+/// Reads `ChunkRecord`s from the indexer's chunks sidecar
+/// (`<rvf>.chunks.jsonl`). Ranks by case-insensitive substring hit count
+/// weighted by query length. (Cosine ranking will activate automatically
+/// once the `embed` feature populates embeddings.) Returns an empty `Vec`
+/// when the sidecar is absent.
 pub async fn handle_search_codebase(
-    _indexer: &crate::indexer::WorkspaceIndexer,
-    _query: &str,
-    _k: usize,
+    indexer: &crate::indexer::WorkspaceIndexer,
+    query: &str,
+    k: usize,
 ) -> anyhow::Result<Vec<ChunkRecord>> {
-    anyhow::bail!(
-        "handle_search_codebase requires fastembed embed feature — deferred to integration"
-    )
+    let sidecar = crate::reconciler::chunks_sidecar_path(&indexer.rvf_path);
+    if !sidecar.exists() {
+        return Ok(vec![]);
+    }
+    let content = std::fs::read_to_string(&sidecar)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", sidecar.display()))?;
+    let mut chunks: Vec<ChunkRecord> = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        chunks.push(
+            serde_json::from_str(line)
+                .map_err(|e| anyhow::anyhow!("corrupt chunk record: {e}"))?,
+        );
+    }
+    chunks = filter_tombstoned(chunks);
+
+    let mut scored: Vec<(f32, ChunkRecord)> = chunks
+        .into_iter()
+        .map(|c| (substring_score(&c.text, query), c))
+        .filter(|(score, _)| *score > 0.0)
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(scored.into_iter().take(k.max(1)).map(|(_, c)| c).collect())
+}
+
+/// Lower-cased substring hit count, weighted by query length so longer
+/// matches outrank shorter ones. Returns `0.0` for non-matches.
+fn substring_score(text: &str, query: &str) -> f32 {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return 0.0;
+    }
+    let t = text.to_lowercase();
+    let hits = t.matches(&q).count() as f32;
+    hits * (q.len() as f32).sqrt()
 }
 
 // ── get_session_context tool ─────────────────────────────────────────────────
@@ -94,17 +133,16 @@ pub fn format_session_context_response(state: &SessionState) -> String {
     state.to_claude_prompt_prefix()
 }
 
-/// Read META_SEG from the `.rvf` at `rvf_path` and deserialise to
-/// `SessionState`.
+/// Read the per-session state from the `<rvf>.meta.json` sidecar.
 ///
-/// Deferred to Phase 8 integration wiring (requires rvf-runtime META_SEG
-/// reader).
+/// rvf-runtime exposes no public META_SEG reader, so ClaudeBox stores
+/// session state in a sidecar; this MCP entry-point delegates to
+/// `claudebox_meta::hooks::load_session_state`. Returns `Default` when
+/// the sidecar is absent (first boot).
 pub async fn handle_get_session_context(
-    _rvf_path: &std::path::Path,
+    rvf_path: &std::path::Path,
 ) -> anyhow::Result<SessionState> {
-    anyhow::bail!(
-        "handle_get_session_context requires rvf-runtime META_SEG reading — deferred to integration"
-    )
+    claudebox_meta::hooks::load_session_state(rvf_path)
 }
 
 // ── Prevent unused-import warnings when the module is used only for tests ───
@@ -223,5 +261,91 @@ mod tests {
     #[test]
     fn test_mcp_binary_has_help() {
         // Binary compilation verified by cargo build above
+    }
+
+    // ── handle_search_codebase / handle_get_session_context ──────────────
+
+    #[tokio::test]
+    async fn test_handle_search_codebase_returns_empty_when_no_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let indexer = crate::indexer::WorkspaceIndexer::new(
+            dir.path().to_path_buf(),
+            dir.path().join("rvf.rvf"),
+        );
+        let hits = handle_search_codebase(&indexer, "anything", 5).await.unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_search_codebase_ranks_substring_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().to_path_buf();
+        std::fs::write(workspace.join("a.rs"), "fn parse_json(input: &str) -> Json {}").unwrap();
+        std::fs::write(workspace.join("b.rs"), "fn render_html(doc: &Document) {}").unwrap();
+        std::fs::write(workspace.join("c.rs"), "fn parse_json_v2(data: &[u8]) {}").unwrap();
+
+        let rvf = dir.path().join("rvf.rvf");
+        let indexer = crate::indexer::WorkspaceIndexer::new(workspace, rvf);
+        indexer.index_all().await.unwrap();
+
+        let hits = handle_search_codebase(&indexer, "parse_json", 5).await.unwrap();
+        assert_eq!(hits.len(), 2, "two files contain parse_json");
+        assert!(hits.iter().all(|c| c.text.contains("parse_json")));
+        // render_html doc must not appear
+        assert!(hits.iter().all(|c| !c.text.contains("render_html")));
+    }
+
+    #[tokio::test]
+    async fn test_handle_search_codebase_filters_tombstoned() {
+        use crate::reconciler::chunks_sidecar_path;
+        let dir = tempfile::tempdir().unwrap();
+        let rvf = dir.path().join("rvf.rvf");
+        let sidecar = chunks_sidecar_path(&rvf);
+
+        let live = ChunkRecord {
+            file_path: "a.rs".into(),
+            chunk_index: 0,
+            text: "parse_json live".into(),
+            embedding: vec![],
+            tombstoned: false,
+        };
+        let dead = ChunkRecord {
+            file_path: "deleted.rs".into(),
+            chunk_index: 0,
+            text: "parse_json deleted".into(),
+            embedding: vec![],
+            tombstoned: true,
+        };
+        let line_live = serde_json::to_string(&live).unwrap();
+        let line_dead = serde_json::to_string(&dead).unwrap();
+        std::fs::write(&sidecar, format!("{line_live}\n{line_dead}\n")).unwrap();
+
+        let indexer =
+            crate::indexer::WorkspaceIndexer::new(dir.path().to_path_buf(), rvf.clone());
+        let hits = handle_search_codebase(&indexer, "parse_json", 5).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].file_path, "a.rs");
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_session_context_returns_default_when_no_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = handle_get_session_context(&dir.path().join("missing.rvf")).await.unwrap();
+        assert!(state.last_boot.is_none());
+        assert!(state.history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_session_context_reads_meta_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let rvf = dir.path().join("rvf.rvf");
+        claudebox_meta::hooks::write_session_state(
+            &rvf,
+            &SessionState { task_context: "Build auth".into(), ..Default::default() },
+        )
+        .unwrap();
+
+        let state = handle_get_session_context(&rvf).await.unwrap();
+        assert_eq!(state.task_context, "Build auth");
     }
 }
