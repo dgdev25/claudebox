@@ -14,22 +14,14 @@ pub enum SnapshotOp {
 ///
 /// All operations target the per-instance overlay at `overlay_path`.
 pub fn run_snapshot(overlay_path: &Path, op: SnapshotOp) -> Result<()> {
+    let overlay = overlay_path.to_string_lossy();
     match op {
         SnapshotOp::Create(name) => {
-            run_qemu_img(&[
-                "snapshot",
-                "-c",
-                &name,
-                &overlay_path.to_string_lossy(),
-            ])?;
+            run_qemu_img(&["snapshot", "-c", &name, &overlay])?;
             eprintln!("Snapshot '{name}' created.");
         }
         SnapshotOp::List => {
-            let out = run_qemu_img_output(&[
-                "snapshot",
-                "-l",
-                &overlay_path.to_string_lossy(),
-            ])?;
+            let out = run_qemu_img_output(&["snapshot", "-l", &overlay])?;
             let names = parse_snapshot_list(&out);
             if names.is_empty() {
                 println!("No snapshots.");
@@ -40,26 +32,16 @@ pub fn run_snapshot(overlay_path: &Path, op: SnapshotOp) -> Result<()> {
             }
         }
         SnapshotOp::Restore(name) => {
-            run_qemu_img(&[
-                "snapshot",
-                "-a",
-                &name,
-                &overlay_path.to_string_lossy(),
-            ])?;
+            run_qemu_img(&["snapshot", "-a", &name, &overlay])?;
             eprintln!("Restored snapshot '{name}'.");
         }
         SnapshotOp::Export { name, output } => {
             // Convert the snapshot to a standalone qcow2 at `output`.
+            let snapshot_arg = format!("snapshot.name={name}");
             run_qemu_img(&[
-                "convert",
-                "-f",
-                "qcow2",
-                "-O",
-                "qcow2",
-                "-l",
-                &format!("snapshot.name={name}"),
-                &overlay_path.to_string_lossy(),
-                &output.to_string_lossy(),
+                "convert", "-f", "qcow2", "-O", "qcow2",
+                "-l", &snapshot_arg,
+                &overlay, &output.to_string_lossy(),
             ])?;
             eprintln!("Snapshot '{name}' exported to {}.", output.display());
         }
@@ -119,14 +101,7 @@ pub fn compact_overlay(overlay_path: &Path) -> Result<()> {
 }
 
 fn run_qemu_img(args: &[&str]) -> Result<()> {
-    let status = std::process::Command::new("qemu-img")
-        .args(args)
-        .status()
-        .map_err(|e| anyhow::anyhow!("qemu-img not found: {e}"))?;
-    if !status.success() {
-        anyhow::bail!("qemu-img {} failed", args.first().unwrap_or(&""));
-    }
-    Ok(())
+    run_qemu_img_output(args).map(|_| ())
 }
 
 fn run_qemu_img_output(args: &[&str]) -> Result<String> {
