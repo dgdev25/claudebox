@@ -85,9 +85,23 @@ jobs:
             gh release create "$TAG" --title "claudebox $TAG" --notes "Automated release for $TAG"
           fi
 
-          if [ -f kernels/bzImage ]; then
-            cp kernels/bzImage dist/bzImage-x86_64
+          # Publish setup-compatible kernel assets.
+          if [ -f kernels/x86_64/kernel ]; then
+            cp kernels/x86_64/kernel dist/kernel-x86_64
           fi
+          if [ -f kernels/x86_64/initramfs ]; then
+            cp kernels/x86_64/initramfs dist/initramfs-x86_64
+          fi
+          if [ -f kernels/aarch64/kernel ]; then
+            cp kernels/aarch64/kernel dist/kernel-aarch64
+          fi
+          if [ -f kernels/aarch64/initramfs ]; then
+            cp kernels/aarch64/initramfs dist/initramfs-aarch64
+          fi
+
+          # Enforce release contract for first-time user setup path.
+          test -f dist/kernel-x86_64
+          test -f dist/initramfs-x86_64
 
           (
             cd dist
@@ -119,4 +133,5 @@ jobs:
 
           ### Assets
           - \`claudebox-dev-${VERSION}.qcow2\` — Alpine 3.21 dev image (Node 22, Python 3.12, git, gcc)
-          - \`bzImage-x86_64\` — Linux 6.6.80 kernel"
+          - \`kernel-x86_64\`, \`initramfs-x86_64\`
+          - \`kernel-aarch64\`, \`initramfs-aarch64\` (if available)"

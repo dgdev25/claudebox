@@ -18,6 +18,8 @@ git push origin v0.1.0
 - `claudebox-x86_64-unknown-linux-gnu`
 
 4. Workflow uploads artifacts and `SHA256SUMS.txt` to the GitHub Release.
+5. Release contract check: workflow fails unless `kernel-x86_64` and
+   `initramfs-x86_64` are present in release assets.
 
 ## For users
 
@@ -26,6 +28,12 @@ Install latest binary:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dgdev25/claudebox/main/install.sh | bash
 claudebox setup
+```
+
+If installing from a fork/private repo:
+
+```bash
+CLAUDEBOX_REPO=owner/repo curl -fsSL https://raw.githubusercontent.com/owner/repo/main/install.sh | bash
 ```
 
 Manual install from a specific release:
