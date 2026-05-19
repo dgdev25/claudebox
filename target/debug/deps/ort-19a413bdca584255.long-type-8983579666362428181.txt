@@ -1,1 +1,0 @@
-unsafe extern "system" fn(*const OrtModelMetadata, *mut OrtAllocator, *mut *mut i8) -> OrtStatusPtr

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["CompressionProfile","DistanceMetric","MetadataValue"],"struct":["CompactionResult","DeleteResult","IngestResult","MetadataEntry","QualityEnvelope","QueryOptions","RvfOptions","SearchResult","WitnessConfig"]};

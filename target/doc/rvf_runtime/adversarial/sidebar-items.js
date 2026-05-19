@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEGENERATE_CV_THRESHOLD"],"fn":["adaptive_n_probe","centroid_distance_cv","combined_effective_n_probe","effective_n_probe_with_drift","is_degenerate_distribution"]};

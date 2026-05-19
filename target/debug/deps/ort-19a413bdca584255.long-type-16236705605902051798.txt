@@ -1,1 +1,0 @@
-unsafe extern "system" fn(*const OrtValue, *mut *mut OrtTensorTypeAndShapeInfo) -> OrtStatusPtr

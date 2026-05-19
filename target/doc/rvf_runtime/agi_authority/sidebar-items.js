@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ActionClass"],"struct":["AuthorityGuard","BudgetSnapshot","BudgetTracker","BudgetUtilization"]};

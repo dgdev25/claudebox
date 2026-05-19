@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["SeedError"],"fn":["make_host_entry"],"struct":["BootstrapProgress","DownloadManifest","ParsedSeed","SeedBuilder"]};

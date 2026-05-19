@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["adversarial","agi_authority","agi_coherence","agi_container","compaction","compress","cow","cow_compact","cow_map","deletion","dos","ffi","filter","locking","membership","options","qr_seed","read_path","safety_net","seed_crypto","status","store","witness","write_path"]};

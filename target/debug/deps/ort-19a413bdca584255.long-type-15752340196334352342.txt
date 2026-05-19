@@ -1,1 +1,0 @@
-unsafe extern "system" fn(*const OrtKernelInfo, *const i8, *mut i64, *mut usize) -> OrtStatusPtr

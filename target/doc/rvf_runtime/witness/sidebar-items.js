@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["WitnessError"],"struct":["GovernancePolicy","ParsedWitness","ScorecardBuilder","WitnessBuilder"]};

@@ -1,1 +1,0 @@
-unsafe extern "system" fn(*const OrtTensorTypeAndShapeInfo, *mut ONNXTensorElementDataType) -> OrtStatusPtr
