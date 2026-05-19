@@ -1,3 +1,4 @@
+pub mod git_hooks;
 pub mod hypervisor;
 pub mod init;
 pub mod manifest;
