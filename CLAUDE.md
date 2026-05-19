@@ -1,24 +1,29 @@
 <!-- TURBO:AUTO-START -->
 # Project: claudebox
 
-*Auto-generated at 2026-05-19 14:09 — do not edit between markers*
+*Auto-generated at 2026-05-19 15:50 — do not edit between markers*
 
 ## Git State
 - **Branch:** `main`
 - **Remote:** `https://github.com/dgdev25/claudebox.git`
-- **Commits:** 79
-- **Uncommitted changes:** 10 file(s)
+- **Commits:** 87
+- **Uncommitted changes:** 3 file(s)
 
 ### Recent Commits
 ```
-b5e5d93 feat(init): git safety net — commit .rvf on init, warn if no repo
-ef63d00 feat(workspace): mount host project directory into VM via virtio-9p
-cbe21b8 feat(distribution): add install.sh, release CI, and kernel download
-ac97687 feat(images): add claudebox-dev qcow2 build pipeline
-c86b073 feat(setup): add `claudebox setup` command for one-command installation
-b5ab5fe feat(firecracker): wire QEMU launch, macOS initramfs fallback, and clean clippy
-994ed0c feat(rvf,firecracker): switch to RvfStore, add QEMU launcher and initramfs builder
-90529fe feat: implement binary .rvf format and wire claudebox init
+586fe0f feat(stubs): merge Tier 3 stub implementations (stubs #13-#15)
+a9bcded refactor(witness): dedupe JSONL loader, harden corrupt-key fallback, tighten tests
+23b09c4 feat(stubs): implement Tier 3 stubs — genesis witness, allowlist update, witness compaction
+964b222 feat(stubs): implement all Tier 1 + Tier 2 stubs (12 of 29 total)
+8abfa99 refactor(core): extract parse_kernel_segment helper, tighten snapshot.rs
+074e3c8 feat(stubs): implement Tier 2 stubs — snapshot, compact, branch/rollback, migrate
+f93386c feat(stubs): implement Tier 1 stubs — stop, destroy, status, kernel, preflight, arch
+418f057 feat(aarch64): native HVF boot on Apple Silicon with full virtio stack
+```
+
+### Other Active Branches
+```
+feat/tier3-stubs (2 minutes ago)
 ```
 
 ## Tech Stack
@@ -55,6 +60,7 @@ CLAUDE.md
 ```
 
 <!-- TURBO:AUTO-END -->
+
 
 
 

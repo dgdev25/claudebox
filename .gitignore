@@ -2,5 +2,8 @@
 docs/plans/.DS_Store
 target/
 kernels/bzImage
+kernels/initramfs
+kernels/aarch64/initramfs-alpine
+kernels/aarch64/vmlinuz-alpine
 *.DS_Store
 images/output/
