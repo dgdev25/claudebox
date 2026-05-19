@@ -26,6 +26,13 @@ pub fn manifest_sidecar_path(rvf_path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.manifest.json", rvf_path.display()))
 }
 
+/// Directory that holds monthly JSONL archives produced by `WitnessCompactor`.
+///
+/// `foo/appliance.rvf` → `foo/appliance.rvf.witness-archives/`
+pub fn witness_archive_dir(rvf_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.witness-archives", rvf_path.display()))
+}
+
 /// Load all `WitnessEntry` records from the `.witness` JSONL sidecar.
 ///
 /// Returns an empty `Vec` when the file does not exist.
@@ -101,6 +108,12 @@ mod tests {
         store.embed_kernel(0x00, 0x01, 0, &[], 2222, Some("{\"version\":1,\"project_id\":\"test-id\",\"project_name\":\"test\",\"language\":{\"Single\":{\"lang\":\"Node\",\"version\":\"22\"}},\"created_at\":\"\",\"kernel_built_at\":\"\",\"network\":{\"allow_domains\":[\"registry.npmjs.org\"],\"allow_localhost\":true,\"dns_server\":\"1.1.1.1\"},\"resources\":{\"memory_mb\":512,\"vcpus\":1,\"disk_gb\":8,\"network_mbps\":100},\"kernel\":{\"arch\":\"x86_64\",\"ssh_port\":2222,\"mcp_port\":7878},\"witness\":{\"max_entries\":10000,\"retention_days\":30}}")).unwrap();
         store.close().unwrap();
         rvf
+    }
+
+    #[test]
+    fn test_witness_archive_dir_appends_archive_suffix() {
+        let p = Path::new("/tmp/foo.rvf");
+        assert_eq!(witness_archive_dir(p), PathBuf::from("/tmp/foo.rvf.witness-archives"));
     }
 
     #[test]
