@@ -4,8 +4,8 @@ use std::process::Command;
 
 const DEV_IMAGE_VERSION: &str = "0.1.0";
 const DEV_IMAGE_NAME: &str = "claudebox-dev-0.1.0.qcow2";
-// Updated by release CI — points to the latest claudebox-dev image on GitHub releases.
 const DEV_IMAGE_URL: &str = "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/claudebox-dev-0.1.0.qcow2";
+const KERNEL_URL: &str = "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/bzImage-x86_64";
 
 pub fn data_dir() -> PathBuf {
     std::env::var("HOME")
@@ -108,13 +108,10 @@ fn setup_kernel(kernels_dir: &Path, force: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Search for the bundled kernel relative to the current working directory
-    // (repo users) or next to the installed binary.
-    let candidates: Vec<PathBuf> = {
+    // 1. Check common local locations first (repo clone, adjacent to binary).
+    let local_candidates: Vec<PathBuf> = {
         let mut v = vec![PathBuf::from("kernels/bzImage")];
         if let Ok(exe) = std::env::current_exe() {
-            // installed binary lives at e.g. ~/.cargo/bin/claudebox;
-            // repo checkout lives at target/debug/claudebox-cli
             for ancestor in exe.ancestors().skip(1).take(5) {
                 v.push(ancestor.join("kernels/bzImage"));
             }
@@ -122,19 +119,30 @@ fn setup_kernel(kernels_dir: &Path, force: bool) -> Result<()> {
         v
     };
 
-    for candidate in &candidates {
+    for candidate in &local_candidates {
         if candidate.exists() {
             std::fs::copy(candidate, &dest)
                 .map_err(|e| anyhow::anyhow!("failed to copy kernel: {e}"))?;
-            eprintln!("[✓] Kernel: {} (copied from {})", dest.display(), candidate.display());
+            eprintln!("[✓] Kernel copied to {}", dest.display());
             return Ok(());
         }
     }
 
-    // Not found — tell the user where to place it.
-    eprintln!("[!] Kernel not found. Place a Linux x86_64 bzImage at:");
-    eprintln!("    {}", dest.display());
-    eprintln!("    or pass --kernel-from <path> to `claudebox init`.");
+    // 2. Download from GitHub releases.
+    eprintln!("[→] Downloading kernel...");
+    eprintln!("    {KERNEL_URL}");
+    let status = Command::new("curl")
+        .args(["-fL", "--progress-bar", "-o"])
+        .arg(&dest)
+        .arg(KERNEL_URL)
+        .status()
+        .map_err(|e| anyhow::anyhow!("curl not found: {e}"))?;
+
+    if !status.success() {
+        let _ = std::fs::remove_file(&dest);
+        anyhow::bail!("[✗] Kernel download failed — check network and retry.");
+    }
+    eprintln!("[✓] Kernel: {}", dest.display());
     Ok(())
 }
 
