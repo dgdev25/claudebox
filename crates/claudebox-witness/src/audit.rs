@@ -1,3 +1,4 @@
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha3::{Digest, Sha3_256};
 
 use crate::{WitnessEntry, WitnessEvent};
@@ -10,21 +11,20 @@ pub struct ChainVerifyResult {
 /// Verify the hash-linked chain of witness entries.
 ///
 /// For each entry:
-/// 1. Recompute SHA3-256(serde_json::to_vec(&entry.event)) and compare to entry.payload_hash.
-/// 2. For entries after genesis: verify entry.prev_hash == previous.payload_hash.
+/// 1. Recompute SHA3-256(serde_json::to_vec(&entry.event)) and compare to `payload_hash`.
+/// 2. For entries after genesis: verify `prev_hash == previous.payload_hash`.
+/// 3. If `verifying_key` is `Some`, verify the Ed25519 signature over
+///    `seq || ts_nanos || payload_hash || prev_hash` (matching `WitnessWriter::sign`).
 ///
-/// Ed25519 signature verification is NOT performed here; that is handled by
-/// the appliance runtime which holds the public key.
-pub fn verify_chain(entries: &[WitnessEntry]) -> ChainVerifyResult {
+/// Pass `None` for `verifying_key` when the key is not yet available (e.g. before
+/// rvf-runtime integration); hash-link verification still runs.
+pub fn verify_chain(entries: &[WitnessEntry], verifying_key: Option<&VerifyingKey>) -> ChainVerifyResult {
     for (i, entry) in entries.iter().enumerate() {
         // Step 1: recompute payload hash and compare.
         let event_bytes = match serde_json::to_vec(&entry.event) {
             Ok(b) => b,
             Err(_) => {
-                return ChainVerifyResult {
-                    is_valid: false,
-                    broken_at_seq: Some(entry.seq),
-                };
+                return ChainVerifyResult { is_valid: false, broken_at_seq: Some(entry.seq) };
             }
         };
         let computed: [u8; 32] = {
@@ -33,35 +33,48 @@ pub fn verify_chain(entries: &[WitnessEntry]) -> ChainVerifyResult {
             hasher.finalize().into()
         };
         if computed != entry.payload_hash {
-            return ChainVerifyResult {
-                is_valid: false,
-                broken_at_seq: Some(entry.seq),
-            };
+            return ChainVerifyResult { is_valid: false, broken_at_seq: Some(entry.seq) };
         }
 
         // Step 2: verify prev_hash links to previous entry's payload_hash.
         if i > 0 {
             let prev = &entries[i - 1];
             if entry.prev_hash != prev.payload_hash {
-                return ChainVerifyResult {
-                    is_valid: false,
-                    broken_at_seq: Some(entry.seq),
-                };
+                return ChainVerifyResult { is_valid: false, broken_at_seq: Some(entry.seq) };
+            }
+        }
+
+        // Step 3: verify Ed25519 signature when a key is provided.
+        if let Some(vk) = verifying_key {
+            let sig_bytes: [u8; 64] = match entry.signature.as_slice().try_into() {
+                Ok(b) => b,
+                Err(_) => {
+                    return ChainVerifyResult { is_valid: false, broken_at_seq: Some(entry.seq) };
+                }
+            };
+            let signature = Signature::from_bytes(&sig_bytes);
+
+            // Reconstruct the signed message: seq || ts_nanos || payload_hash || prev_hash
+            let mut msg = Vec::with_capacity(8 + 16 + 32 + 32);
+            msg.extend_from_slice(&entry.seq.to_le_bytes());
+            msg.extend_from_slice(&entry.ts_nanos.to_le_bytes());
+            msg.extend_from_slice(&entry.payload_hash);
+            msg.extend_from_slice(&entry.prev_hash);
+
+            if vk.verify(&msg, &signature).is_err() {
+                return ChainVerifyResult { is_valid: false, broken_at_seq: Some(entry.seq) };
             }
         }
     }
 
-    ChainVerifyResult {
-        is_valid: true,
-        broken_at_seq: None,
-    }
+    ChainVerifyResult { is_valid: true, broken_at_seq: None }
 }
 
 /// Format witness entries as an ASCII table for human-readable audit output.
 pub fn format_audit_table(entries: &[WitnessEntry]) -> String {
     let mut lines = Vec::new();
 
-    let valid = verify_chain(entries);
+    let valid = verify_chain(entries, None);
     let chain_status = if valid.is_valid {
         "OK"
     } else {
@@ -100,7 +113,7 @@ fn to_hex(bytes: &[u8]) -> String {
 /// Returns an error if serialization fails, so callers can detect and surface
 /// data loss rather than silently receiving empty JSON.
 pub fn format_audit_json(entries: &[WitnessEntry]) -> anyhow::Result<String> {
-    let valid = verify_chain(entries);
+    let valid = verify_chain(entries, None);
     let payload = serde_json::json!({
         "chain_valid": valid.is_valid,
         "broken_at_seq": valid.broken_at_seq,
@@ -194,16 +207,52 @@ mod tests {
     }
 
     #[test]
-    fn test_chain_integrity_valid() {
+    fn test_chain_integrity_valid_hash_only() {
         let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
         let genesis = WitnessWriter::create_genesis(
             &signing_key,
             WitnessEvent::Boot { project_id: "test".into() },
         )
         .unwrap();
-        let result = verify_chain(&[genesis]);
+        let result = verify_chain(&[genesis], None);
         assert!(result.is_valid);
         assert_eq!(result.broken_at_seq, None);
+    }
+
+    #[test]
+    fn test_chain_integrity_valid_with_signature() {
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
+        let verifying_key = signing_key.verifying_key();
+        let genesis = WitnessWriter::create_genesis(
+            &signing_key,
+            WitnessEvent::Boot { project_id: "test".into() },
+        )
+        .unwrap();
+        let next = WitnessWriter::create_next(
+            &signing_key,
+            &genesis,
+            WitnessEvent::Command { cmd: "cargo test".into(), exit_code: 0 },
+        )
+        .unwrap();
+        let result = verify_chain(&[genesis, next], Some(&verifying_key));
+        assert!(result.is_valid);
+        assert_eq!(result.broken_at_seq, None);
+    }
+
+    #[test]
+    fn test_chain_integrity_detects_tampered_signature() {
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
+        let verifying_key = signing_key.verifying_key();
+        let mut genesis = WitnessWriter::create_genesis(
+            &signing_key,
+            WitnessEvent::Boot { project_id: "test".into() },
+        )
+        .unwrap();
+        // Tamper with the signature bytes
+        if let Some(b) = genesis.signature.first_mut() { *b ^= 0xFF; }
+        let result = verify_chain(&[genesis], Some(&verifying_key));
+        assert!(!result.is_valid);
+        assert_eq!(result.broken_at_seq, Some(0));
     }
 
     #[test]
@@ -216,7 +265,7 @@ mod tests {
         .unwrap();
         // Tamper with payload_hash
         genesis.payload_hash[0] ^= 0xFF;
-        let result = verify_chain(&[genesis]);
+        let result = verify_chain(&[genesis], None);
         assert!(!result.is_valid);
     }
 }

@@ -66,19 +66,51 @@ impl FirecrackerVm {
         anyhow::bail!("requires Firecracker runtime — would PUT /actions SendCtrlAltDel to {:?}", self.socket_path)
     }
 
-    /// Check the current VM status by inspecting the socket path.
+    /// Check the current VM status by probing the Firecracker Unix socket.
+    ///
+    /// Three-level check:
+    /// 1. If the socket path doesn't exist → `Stopped` or `NotFound`.
+    /// 2. If the path exists but is not a socket file (stale regular file) → `Stopped`.
+    /// 3. If the socket exists and Firecracker accepts a connection → `Running`.
+    ///    If connect is refused (process crashed, leftover socket) → `Stopped`.
     pub fn status(&self) -> VmStatus {
-        if self.socket_path.exists() {
-            VmStatus::Running
-        } else if self
-            .socket_path
-            .parent()
-            .map(|p| p.exists())
-            .unwrap_or(false)
+        let meta = match std::fs::metadata(&self.socket_path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return if self.socket_path.parent().map(|p| p.exists()).unwrap_or(false) {
+                    VmStatus::Stopped
+                } else {
+                    VmStatus::NotFound
+                };
+            }
+            Err(_) => return VmStatus::Stopped,
+        };
+
+        // Step 2: verify the path is actually a Unix socket, not a stale file.
+        #[cfg(unix)]
         {
-            VmStatus::Stopped
-        } else {
-            VmStatus::NotFound
+            use std::os::unix::fs::FileTypeExt;
+            if !meta.file_type().is_socket() {
+                return VmStatus::Stopped;
+            }
+        }
+
+        // Step 3: attempt a connection — distinguishes a live VM from a crashed
+        // one that left its socket file behind.
+        #[cfg(unix)]
+        {
+            use std::os::unix::net::UnixStream;
+            if UnixStream::connect(&self.socket_path).is_ok() {
+                return VmStatus::Running;
+            }
+            return VmStatus::Stopped;
+        }
+
+        // Non-Unix fallback: socket existence is the best we can do.
+        #[cfg(not(unix))]
+        {
+            let _ = meta;
+            VmStatus::Running
         }
     }
 }
