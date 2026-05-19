@@ -24,6 +24,7 @@
 - [ ] `claudebox compact myapp.rvf` removes tombstoned VEC entries and archives excess WITNESS entries
 - [ ] `claudebox upgrade-kernel myapp.rvf` rebuilds KERNEL_SEG with META/VEC intact
 - [ ] `claudebox migrate myapp.rvf` applies schema migrations with WITNESS event recorded
+- [ ] `claudebox snapshot export myapp.rvf pre-refactor --output ./snap.rvf` produces self-contained bootable `.rvf`
 
 **Out of scope:**
 - Windows host support (v1: Linux + macOS only)

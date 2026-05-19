@@ -110,13 +110,48 @@ git commit -m "feat(vec): implement WorkspaceIndexer — fastembed HNSW with ski
 - [ ] **Step 1: Write failing tests**
 
 ```rust
+// Reconciler logic is unit-tested via reconcile_chunks(), a pure function that
+// takes a Vec<ChunkRecord> and a set of existing file paths and returns the
+// updated vec with tombstoned flags set. No RVF store or disk I/O required.
+
 #[test]
-fn test_reconciler_tombstones_missing_files() {
-    // Setup: VEC_SEG with chunks for file_a.rs (exists) and file_b.rs (deleted)
-    // Run reconcile()
-    // Verify: file_a.rs chunks have tombstoned=false
-    //         file_b.rs chunks have tombstoned=true
-    todo!() // implement with mock VEC_SEG once indexer is wired
+fn test_reconcile_chunks_tombstones_missing_file() {
+    let existing_files: std::collections::HashSet<String> =
+        vec!["src/a.rs".to_string()].into_iter().collect();
+
+    let chunks = vec![
+        ChunkRecord { file_path: "src/a.rs".into(), chunk_index: 0,
+            text: "fn foo".into(), embedding: vec![], tombstoned: false },
+        ChunkRecord { file_path: "src/a.rs".into(), chunk_index: 1,
+            text: "fn bar".into(), embedding: vec![], tombstoned: false },
+        ChunkRecord { file_path: "src/deleted.rs".into(), chunk_index: 0,
+            text: "fn gone".into(), embedding: vec![], tombstoned: false },
+    ];
+
+    let (updated, stats) = reconcile_chunks(chunks, &existing_files);
+
+    // existing file chunks stay alive
+    assert!(!updated[0].tombstoned, "src/a.rs chunk 0 should not be tombstoned");
+    assert!(!updated[1].tombstoned, "src/a.rs chunk 1 should not be tombstoned");
+    // deleted file chunk is tombstoned
+    assert!(updated[2].tombstoned, "src/deleted.rs chunk should be tombstoned");
+    assert_eq!(stats.files_tombstoned, 1);
+    assert_eq!(stats.files_checked, 2); // 2 unique file paths
+}
+
+#[test]
+fn test_reconcile_chunks_noop_when_all_files_exist() {
+    let existing_files: std::collections::HashSet<String> =
+        vec!["src/a.rs".to_string(), "src/b.rs".to_string()].into_iter().collect();
+    let chunks = vec![
+        ChunkRecord { file_path: "src/a.rs".into(), chunk_index: 0,
+            text: "fn a".into(), embedding: vec![], tombstoned: false },
+        ChunkRecord { file_path: "src/b.rs".into(), chunk_index: 0,
+            text: "fn b".into(), embedding: vec![], tombstoned: false },
+    ];
+    let (updated, stats) = reconcile_chunks(chunks, &existing_files);
+    assert!(updated.iter().all(|c| !c.tombstoned));
+    assert_eq!(stats.files_tombstoned, 0);
 }
 
 #[test]
@@ -126,6 +161,8 @@ fn test_reconcile_stats_counts_correctly() {
     assert_eq!(stats.files_checked - stats.files_tombstoned, 7);
 }
 ```
+
+Add a `reconcile_chunks(chunks: Vec<ChunkRecord>, existing: &HashSet<String>) -> (Vec<ChunkRecord>, ReconcileStats)` pure function. `VecReconciler::reconcile()` reads chunk metadata from VEC_SEG, builds `existing_files` by walking the workspace, calls `reconcile_chunks`, writes back updated metadata.
 
 - [ ] **Step 2: Implement `reconciler.rs`** from Technical Plan §Phase 6
 

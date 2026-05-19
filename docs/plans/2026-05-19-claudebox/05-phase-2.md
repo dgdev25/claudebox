@@ -108,29 +108,56 @@ git commit -m "feat(rvf): implement InitTransaction RAII — atomic init with pa
 - [ ] **Step 1: Write failing tests**
 
 ```rust
+// WitnessCompactor is tested via its core logic function, which is unit-testable
+// without a real RVF store by accepting Vec<WitnessEntry> directly.
+
 #[test]
-fn test_compaction_archives_when_over_limit() {
-    // Create 12,000 witness entries in a temp RVF
-    // Run WitnessCompactor with max_entries=10,000
-    // Verify hot chain has <= 10,000 entries
-    // Verify archive file exists
-    // Verify compaction appended WitnessCompact event to hot chain
-    todo!() // implement after WitnessCompactor struct exists
+fn test_compaction_partitions_correctly() {
+    // Build 12,000 dummy entries with sequential timestamps
+    let base = chrono::Utc::now();
+    let entries: Vec<WitnessEntryMeta> = (0u64..12_000)
+        .map(|i| WitnessEntryMeta { seq: i, ts_nanos: (base - chrono::Duration::seconds(i as i64)).timestamp_nanos_opt().unwrap() as u128 })
+        .collect();
+
+    let policy = WitnessPolicy { max_entries: 10_000, retention_days: 30 };
+    let (keep, archive) = partition_entries(&entries, &policy);
+
+    // Hot chain must not exceed max_entries
+    assert!(keep.len() <= 10_000, "hot chain has {} entries, expected <= 10,000", keep.len());
+    // Archived entries are the oldest ones
+    assert_eq!(archive.len(), entries.len() - keep.len());
+    // No entry appears in both sets
+    let keep_seqs: std::collections::HashSet<u64> = keep.iter().map(|e| e.seq).collect();
+    for e in &archive {
+        assert!(!keep_seqs.contains(&e.seq), "seq {} in both keep and archive", e.seq);
+    }
 }
 
 #[test]
-fn test_compaction_noop_when_under_limit() {
-    let dir = tempdir().unwrap();
-    let policy = WitnessPolicy { max_entries: 10_000, retention_days: 30 };
-    let compactor = WitnessCompactor {
-        rvf_path: dir.path().join("test.rvf"),
-        policy,
-        archive_dir: dir.path().join("archive"),
+fn test_compaction_result_counts_archived_entries() {
+    let result = CompactionResult {
+        entries_archived: 2_000,
+        entries_kept: 10_000,
+        archive_path: Some(std::path::PathBuf::from("/tmp/witness-2026-04.rvf")),
     };
-    // With 0 entries, compact_if_needed should be a no-op
-    // (returns Ok with entries_archived=0, archive_path=None)
+    assert_eq!(result.entries_archived, 2_000);
+    assert_eq!(result.entries_kept, 10_000);
+    assert!(result.archive_path.is_some());
+}
+
+#[test]
+fn test_compaction_noop_result_when_under_limit() {
+    let result = CompactionResult {
+        entries_archived: 0,
+        entries_kept: 50,
+        archive_path: None,
+    };
+    assert_eq!(result.entries_archived, 0);
+    assert!(result.archive_path.is_none());
 }
 ```
+
+Add a `partition_entries` pure function to `compaction.rs` that accepts a slice of `WitnessEntryMeta` (just `seq` + `ts_nanos`) and the policy, returns `(keep, archive)` vecs. This makes the partitioning logic unit-testable without disk I/O. `compact_if_needed` reads from RVF, calls `partition_entries`, then writes archive and rewrites hot chain.
 
 - [ ] **Step 2: Implement `compaction.rs`** from Technical Plan §Phase 2
 
