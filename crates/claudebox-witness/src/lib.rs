@@ -1,3 +1,5 @@
+pub mod compaction;
+
 use serde::{Deserialize, Serialize};
 
 /// A 32-byte hash stored as hex for JSON compatibility.
