@@ -2,8 +2,10 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const ALPINE_ISO_URL: &str = "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-virt-3.21.0-x86_64.iso";
-const ALPINE_ISO_NAME: &str = "alpine-virt-3.21.0-x86_64.iso";
+const DEV_IMAGE_VERSION: &str = "0.1.0";
+const DEV_IMAGE_NAME: &str = "claudebox-dev-0.1.0.qcow2";
+// Updated by release CI — points to the latest claudebox-dev image on GitHub releases.
+const DEV_IMAGE_URL: &str = "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/claudebox-dev-0.1.0.qcow2";
 
 pub fn data_dir() -> PathBuf {
     std::env::var("HOME")
@@ -16,7 +18,7 @@ pub fn default_kernel_path() -> PathBuf {
 }
 
 pub fn default_rootfs_path() -> PathBuf {
-    data_dir().join("rootfs").join(ALPINE_ISO_NAME)
+    data_dir().join("rootfs").join(DEV_IMAGE_NAME)
 }
 
 pub fn run_setup(force: bool) -> Result<()> {
@@ -138,29 +140,32 @@ fn setup_kernel(kernels_dir: &Path, force: bool) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn setup_rootfs_macos(rootfs_dir: &Path, force: bool) -> Result<()> {
-    let dest = rootfs_dir.join(ALPINE_ISO_NAME);
+    let dest = rootfs_dir.join(DEV_IMAGE_NAME);
     if dest.exists() && !force {
-        eprintln!("[✓] Rootfs: {}", dest.display());
+        eprintln!("[✓] Dev image: {}", dest.display());
         return Ok(());
     }
 
-    let size_hint = "~48 MB";
-    eprintln!("[→] Downloading Alpine Linux rootfs ({size_hint})...");
-    eprintln!("    {ALPINE_ISO_URL}");
+    eprintln!("[→] Downloading claudebox-dev v{DEV_IMAGE_VERSION} (~300 MB)...");
+    eprintln!("    {DEV_IMAGE_URL}");
 
     let status = Command::new("curl")
         .args(["-fL", "--progress-bar", "-o"])
         .arg(&dest)
-        .arg(ALPINE_ISO_URL)
+        .arg(DEV_IMAGE_URL)
         .status()
         .map_err(|e| anyhow::anyhow!("curl not found: {e}"))?;
 
     if !status.success() {
-        // Remove partial download
         let _ = std::fs::remove_file(&dest);
-        anyhow::bail!("[✗] Failed to download Alpine rootfs — check network and retry.");
+        anyhow::bail!(
+            "[✗] Download failed.\n    \
+             If the release isn't published yet, build locally:\n    \
+             ./scripts/build-dev-image.sh\n    \
+             cp images/output/{DEV_IMAGE_NAME} ~/.claudebox/rootfs/"
+        );
     }
-    eprintln!("[✓] Rootfs: {}", dest.display());
+    eprintln!("[✓] Dev image: {}", dest.display());
     Ok(())
 }
 
@@ -182,10 +187,10 @@ mod tests {
     }
 
     #[test]
-    fn default_rootfs_contains_alpine() {
+    fn default_rootfs_is_dev_image() {
         assert!(default_rootfs_path()
             .to_str()
             .unwrap()
-            .contains("alpine"));
+            .contains("claudebox-dev"));
     }
 }

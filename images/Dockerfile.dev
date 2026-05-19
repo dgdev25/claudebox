@@ -1,0 +1,67 @@
+FROM alpine:3.21
+
+# Core system: init, shell, networking, SSH
+RUN apk add --no-cache \
+    openrc \
+    bash \
+    curl \
+    wget \
+    git \
+    ca-certificates \
+    openssh \
+    util-linux \
+    procps \
+    iproute2 \
+    dhcpcd
+
+# Dev tools: compilers, build tools, common utilities
+RUN apk add --no-cache \
+    gcc \
+    g++ \
+    musl-dev \
+    make \
+    jq \
+    vim \
+    htop \
+    tmux \
+    rsync
+
+# Language runtimes
+RUN apk add --no-cache \
+    nodejs \
+    npm \
+    python3 \
+    py3-pip
+
+# SSH: generate host keys, allow root login with password
+# Password is "claudebox" — user should replace with key auth in production
+RUN ssh-keygen -A && \
+    echo "root:claudebox" | chpasswd && \
+    sed -i \
+        -e 's|#*PermitRootLogin.*|PermitRootLogin yes|' \
+        -e 's|#*PasswordAuthentication.*|PasswordAuthentication yes|' \
+        -e 's|#*UsePAM.*|UsePAM no|' \
+        /etc/ssh/sshd_config
+
+# OpenRC: enable sshd and networking on boot
+RUN rc-update add sshd default && \
+    rc-update add networking default && \
+    rc-update add hostname default
+
+# Serial console on ttyS0 (QEMU -nographic)
+RUN echo 'ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' >> /etc/inittab
+
+# Network: DHCP on eth0 (user-mode QEMU networking)
+RUN printf 'auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n' \
+    > /etc/network/interfaces
+
+# Filesystem table: root on /dev/vda (virtio disk)
+RUN printf '/dev/vda\t/\text4\tdefaults\t0 1\n' > /etc/fstab
+
+# Hostname
+RUN echo "claudebox" > /etc/hostname
+
+# Empty mountpoints for kernel to populate
+RUN mkdir -p /dev /proc /sys /run /tmp && chmod 1777 /tmp
+
+CMD ["/sbin/init"]
