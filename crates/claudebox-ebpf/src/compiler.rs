@@ -240,7 +240,8 @@ mod tests {
         assert!(config.contains("acl"));
     }
 
-    // Task 3.3: multi-language union allowlist compilation test
+    /// Task 3.3 — verifies that a 5-domain union allowlist (Node.js + Rust)
+    /// compiles to a valid ELF BPF object without errors.
     #[test]
     #[cfg(target_os = "linux")]
     fn test_multi_language_union_allowlist_compiles() {
