@@ -10,3 +10,5 @@ pub mod shell_bridge;
 pub mod staleness;
 pub mod start;
 pub mod status;
+pub mod stop;
+pub mod snapshot;

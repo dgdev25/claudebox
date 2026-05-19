@@ -280,7 +280,14 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Stop { rvf } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("stop command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let pid_path = claudebox_core::setup::instance_pid_path(&manifest.project_id);
+            if !pid_path.exists() {
+                eprintln!("VM is not running (no PID file found).");
+            } else {
+                claudebox_core::stop::stop_instance(&pid_path)?;
+                eprintln!("VM stopped.");
+            }
         }
         Commands::Logs { rvf, .. } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
@@ -288,47 +295,163 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Status { rvf } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("status command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let pid_path = claudebox_core::setup::instance_pid_path(&manifest.project_id);
+            let vm_status = if let Ok(pid) = claudebox_core::stop::read_pid_file(&pid_path) {
+                let alive = std::process::Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if alive {
+                    claudebox_core::status::VmStatusDisplay::Running {
+                        pid,
+                        ssh_port: manifest.kernel.ssh_port,
+                        mcp_port: manifest.kernel.mcp_port,
+                    }
+                } else {
+                    claudebox_core::status::VmStatusDisplay::Stopped
+                }
+            } else {
+                claudebox_core::status::VmStatusDisplay::Stopped
+            };
+
+            let rvf_size_mb = std::fs::metadata(&rvf)
+                .map(|m| m.len() / (1024 * 1024))
+                .unwrap_or(0);
+
+            let lang = match &manifest.language {
+                claudebox_core::manifest::LanguageProfile::Single(p) => {
+                    format!("{:?}@{}", p.lang, p.version).to_lowercase()
+                }
+                claudebox_core::manifest::LanguageProfile::Multi(ps) => ps
+                    .iter()
+                    .map(|p| format!("{:?}@{}", p.lang, p.version).to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            };
+
+            let info = claudebox_core::status::ProjectStatus {
+                project_name: manifest.project_name.clone(),
+                rvf_path: rvf.clone(),
+                rvf_size_mb,
+                vm_status,
+                language: lang,
+                kernel_age_days: 0,
+                kernel_stale: false,
+                witness_hot_entries: 0,
+                witness_archived_months: 0,
+                vec_chunks: 0,
+                vec_files: 0,
+                vec_tombstoned: 0,
+                schema_version: manifest.version,
+            };
+            println!("{}", claudebox_core::status::format_status(&info));
         }
-        Commands::Branch { rvf, .. } => {
+        Commands::Branch { rvf, name } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("branch command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
+            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
+            claudebox_core::snapshot::create_branch(&overlay, &name)?;
         }
-        Commands::Rollback { rvf, .. } => {
+        Commands::Rollback { rvf, branch } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("rollback command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
+            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
+            claudebox_core::snapshot::rollback_to_branch(&overlay, &branch)?;
         }
         Commands::Audit { rvf, .. } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("audit command not yet fully implemented")
         }
-        Commands::Snapshot { rvf, .. } => {
+        Commands::Snapshot { rvf, action } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("snapshot command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
+            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
+            let op = match action {
+                SnapshotAction::Create { name } =>
+                    claudebox_core::snapshot::SnapshotOp::Create(name),
+                SnapshotAction::List =>
+                    claudebox_core::snapshot::SnapshotOp::List,
+                SnapshotAction::Restore { name } =>
+                    claudebox_core::snapshot::SnapshotOp::Restore(name),
+                SnapshotAction::Export { name, output } =>
+                    claudebox_core::snapshot::SnapshotOp::Export { name, output },
+            };
+            claudebox_core::snapshot::run_snapshot(&overlay, op)?;
         }
         Commands::UpgradeKernel { rvf } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("upgrade-kernel command not yet fully implemented")
         }
-        Commands::Kernel { rvf, .. } => {
+        Commands::Kernel { rvf, action } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("kernel command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            match action {
+                KernelAction::Show => {
+                    println!("arch:         {}", manifest.kernel.arch);
+                    println!("ssh_port:     {}", manifest.kernel.ssh_port);
+                    println!("mcp_port:     {}", manifest.kernel.mcp_port);
+                    println!("kernel_built: {}", manifest.kernel_built_at);
+                }
+                KernelAction::Cache => {
+                    let cache_dir = claudebox_core::setup::data_dir()
+                        .join("kernels")
+                        .join(&manifest.kernel.arch);
+                    std::fs::create_dir_all(&cache_dir)?;
+                    let opts = claudebox_core::start::StartOptions {
+                        rvf: rvf.clone(),
+                        workspace: std::path::PathBuf::from("."),
+                    };
+                    let extracted = claudebox_core::start::extract_kernel(&opts)?;
+                    let dest = cache_dir.join("kernel");
+                    std::fs::copy(&extracted.kernel_path, &dest)?;
+                    eprintln!("Kernel cached to {}", dest.display());
+                }
+            }
         }
         Commands::Migrate { rvf } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("migrate command not yet fully implemented")
+            let schema_version = claudebox_migrate::read_schema_version(&rvf).unwrap_or(1);
+            let chain = claudebox_migrate::MigrationChain::new();
+            let latest = chain.latest_version();
+            if schema_version == latest {
+                eprintln!("Already at latest schema version (v{latest}), nothing to do.");
+            } else if schema_version > latest {
+                anyhow::bail!(
+                    "{} schema v{schema_version} is newer than this binary (max v{latest}); \
+                     upgrade claudebox",
+                    rvf.display()
+                );
+            } else {
+                eprintln!(
+                    "Migrating {} from v{schema_version} to v{latest}…",
+                    rvf.display()
+                );
+                let new_version = chain.migrate_to_latest(&rvf, schema_version)?;
+                eprintln!("Migration complete — now at v{new_version}.");
+            }
         }
         Commands::Compact { rvf } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("compact command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
+            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
+            claudebox_core::snapshot::compact_overlay(&overlay)?;
         }
         Commands::UpdateAllowlist { rvf, add, remove } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
             claudebox_core::allowlist::run_update_allowlist(&rvf, add, remove).await?;
         }
-        Commands::Destroy { rvf, .. } => {
+        Commands::Destroy { rvf, force } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("destroy command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            claudebox_core::stop::destroy_instance(&manifest.project_id, force)?;
+            eprintln!("VM data for '{}' destroyed.", manifest.project_name);
         }
         Commands::Setup { force } => {
             claudebox_core::setup::run_setup(force)?;

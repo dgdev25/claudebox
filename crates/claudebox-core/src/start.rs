@@ -31,18 +31,55 @@ pub fn extract_kernel(opts: &StartOptions) -> anyhow::Result<ExtractedKernel> {
     // Step 1: preflight checks.
     crate::preflight::check_dependencies()?;
 
-    // Step 2: Open the RVF store.
-    let store = RvfStore::open_readonly(&opts.rvf)
-        .map_err(|e| anyhow::anyhow!("failed to open {}: {e:?}", opts.rvf.display()))?;
+    // Step 2-5: Open the RVF and parse the kernel segment.
+    let parsed = parse_kernel_segment(&opts.rvf)?;
 
-    // Step 3: Extract kernel segment.
+    // Step 6-7: Write kernel image to a per-project temp file.
+    let project_id = extract_project_id(&parsed.manifest_json);
+    let tmp_dir = std::path::PathBuf::from(format!("/tmp/claudebox-{project_id}"));
+    std::fs::create_dir_all(&tmp_dir)
+        .map_err(|e| anyhow::anyhow!("failed to create temp dir: {e}"))?;
+    let kernel_path = tmp_dir.join("bzImage");
+    std::fs::write(&kernel_path, &parsed.kernel_image)
+        .map_err(|e| anyhow::anyhow!("failed to write kernel to {}: {e}", kernel_path.display()))?;
+
+    Ok(ExtractedKernel {
+        kernel_path,
+        ssh_port: parsed.ssh_port,
+        manifest_json: parsed.manifest_json,
+    })
+}
+
+/// Open the RVF and return the embedded `ClaudeBoxManifest` without writing
+/// any files — used by stop/status/kernel commands that only need metadata.
+pub fn read_manifest_from_rvf(rvf: &std::path::Path) -> anyhow::Result<crate::manifest::ClaudeBoxManifest> {
+    let parsed = parse_kernel_segment(rvf)?;
+    serde_json::from_str(&parsed.manifest_json)
+        .map_err(|e| anyhow::anyhow!("corrupt manifest in {}: {e}", rvf.display()))
+}
+
+/// Parsed contents of a `KERNEL_SEG`: the kernel image bytes, the manifest
+/// JSON recovered from the cmdline field, and the SSH port from the header.
+struct ParsedKernelSegment {
+    kernel_image: Vec<u8>,
+    manifest_json: String,
+    ssh_port: u16,
+}
+
+/// Open the RVF at `rvf` and decode its kernel segment. Shared by
+/// `extract_kernel` (which then writes the image to disk) and
+/// `read_manifest_from_rvf` (which discards the image and parses the JSON).
+fn parse_kernel_segment(rvf: &std::path::Path) -> anyhow::Result<ParsedKernelSegment> {
+    let store = RvfStore::open_readonly(rvf)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e:?}", rvf.display()))?;
+
     let (hdr_bytes, remainder) = store
         .extract_kernel()
         .map_err(|e| anyhow::anyhow!("extract_kernel failed: {e:?}"))?
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no KERNEL_SEG in {} — run `claudebox init --kernel-from <bzImage>` first",
-                opts.rvf.display()
+                rvf.display()
             )
         })?;
 
@@ -52,21 +89,15 @@ pub fn extract_kernel(opts: &StartOptions) -> anyhow::Result<ExtractedKernel> {
         hdr_bytes.len()
     );
 
-    // Step 4: Parse KernelHeader to get image_size, cmdline_length, ssh_port.
     let mut hdr_array = [0u8; 128];
     hdr_array.copy_from_slice(&hdr_bytes);
     let header = KernelHeader::from_bytes(&hdr_array)
         .map_err(|e| anyhow::anyhow!("invalid KernelHeader: {e:?}"))?;
 
+    // Segment payload layout (after the 128B KernelHeader) is:
+    //   kernel_image (image_size bytes) || cmdline (cmdline_length bytes)
     let image_size = header.image_size as usize;
     let cmdline_length = header.cmdline_length as usize;
-    // api_port is stored big-endian in to_bytes but KernelHeader::from_bytes
-    // converts it correctly, so we can use header.api_port directly.
-    let ssh_port = header.api_port;
-
-    // The segment payload layout (after KernelHeader 128B) is:
-    //   kernel_image (image_size bytes) || cmdline (cmdline_length bytes)
-    let cmdline_start = image_size;
     let cmdline_end = image_size + cmdline_length;
 
     anyhow::ensure!(
@@ -76,30 +107,13 @@ pub fn extract_kernel(opts: &StartOptions) -> anyhow::Result<ExtractedKernel> {
         cmdline_end
     );
 
-    // Step 5: Extract manifest JSON from cmdline.
-    let manifest_json = String::from_utf8(remainder[cmdline_start..cmdline_end].to_vec())
+    let manifest_json = String::from_utf8(remainder[image_size..cmdline_end].to_vec())
         .map_err(|e| anyhow::anyhow!("cmdline is not valid UTF-8: {e}"))?;
 
-    // Step 6: Extract kernel image bytes.
-    let kernel_image = if image_size == 0 {
-        &[] as &[u8]
-    } else {
-        &remainder[..image_size]
-    };
-
-    // Step 7: Write kernel image to temp file.
-    let project_id = extract_project_id(&manifest_json);
-    let tmp_dir = std::path::PathBuf::from(format!("/tmp/claudebox-{project_id}"));
-    std::fs::create_dir_all(&tmp_dir)
-        .map_err(|e| anyhow::anyhow!("failed to create temp dir: {e}"))?;
-    let kernel_path = tmp_dir.join("bzImage");
-    std::fs::write(&kernel_path, kernel_image)
-        .map_err(|e| anyhow::anyhow!("failed to write kernel to {}: {e}", kernel_path.display()))?;
-
-    Ok(ExtractedKernel {
-        kernel_path,
-        ssh_port,
+    Ok(ParsedKernelSegment {
+        kernel_image: remainder[..image_size].to_vec(),
         manifest_json,
+        ssh_port: header.api_port,
     })
 }
 

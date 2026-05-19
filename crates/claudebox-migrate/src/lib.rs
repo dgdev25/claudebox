@@ -1,4 +1,5 @@
 use rvf_runtime::RvfStore;
+use rvf_types::kernel::KernelHeader;
 
 /// Trait implemented by each version-to-version migration step.
 #[allow(clippy::wrong_self_convention)]
@@ -44,7 +45,7 @@ impl MigrationChain {
     /// migrator fails. Version only advances after `m.migrate()` succeeds.
     pub fn migrate_to_latest(
         &self,
-        _rvf_path: &std::path::Path,
+        rvf_path: &std::path::Path,
         current_version: u8,
     ) -> anyhow::Result<u8> {
         let latest = self.latest_version();
@@ -57,15 +58,15 @@ impl MigrationChain {
         let mut version = current_version;
         for m in &self.migrators {
             if m.from_version() == version {
-                // FIXME: open RvfStore and call m.migrate(store)? here before advancing.
-                // Until rvf-runtime is wired, this is a no-op stub — version advances
-                // without executing the migrator body. Do NOT ship this without fixing.
-                // m.migrate(store)?;
+                let mut store = RvfStore::open(rvf_path)
+                    .map_err(|e| anyhow::anyhow!("failed to open {} for migration: {e:?}", rvf_path.display()))?;
+                m.migrate(&mut store)?;
                 version = m.to_version();
                 tracing::info!(
-                    "Applied migration v{} → v{}",
+                    "Applied migration v{} → v{} on {}",
                     m.from_version(),
-                    m.to_version()
+                    m.to_version(),
+                    rvf_path.display()
                 );
             }
         }
@@ -91,18 +92,85 @@ impl Default for MigrationChain {
 }
 
 /// Called by every `claudebox` command before operating on a `.rvf` file.
+/// Opens the RVF, reads the embedded manifest, compares schema `version` to
+/// the migration chain. Returns an error for newer-than-supported files;
+/// auto-applies minor migrations when `auto_migrate_minor` is `true`.
 pub fn check_and_migrate(rvf_path: &std::path::Path, auto_migrate_minor: bool) -> anyhow::Result<()> {
-    // Phase 11: read manifest from rvf_path to get current schema version.
-    // For now, treat all files as version 1 (current).
-    let _ = rvf_path;
-    let _ = auto_migrate_minor;
+    if !rvf_path.exists() {
+        anyhow::bail!("{} not found", rvf_path.display());
+    }
+
+    let schema_version = read_schema_version(rvf_path).unwrap_or(1);
+
+    let chain = MigrationChain::new();
+    if schema_version > chain.latest_version() {
+        anyhow::bail!(
+            "{} schema version {} is newer than this binary supports (max {}); \
+             upgrade claudebox",
+            rvf_path.display(),
+            schema_version,
+            chain.latest_version()
+        );
+    }
+
+    if auto_migrate_minor && chain.needs_migration(schema_version) {
+        tracing::info!(
+            "{}: migrating from schema v{} to v{}",
+            rvf_path.display(),
+            schema_version,
+            chain.latest_version()
+        );
+        chain.migrate_to_latest(rvf_path, schema_version)?;
+    }
+
     Ok(())
+}
+
+/// Read the `version` field from the manifest JSON embedded in the RVF kernel
+/// segment. Returns `None` if the file is not a valid RVF or has no manifest.
+pub fn read_schema_version(rvf_path: &std::path::Path) -> Option<u8> {
+    let store = RvfStore::open_readonly(rvf_path).ok()?;
+    let (hdr_bytes, remainder) = store.extract_kernel().ok()??;
+    if hdr_bytes.len() != 128 {
+        return None;
+    }
+    let mut arr = [0u8; 128];
+    arr.copy_from_slice(&hdr_bytes);
+    let header = KernelHeader::from_bytes(&arr).ok()?;
+    let image_size = header.image_size as usize;
+    let cmdline_len = header.cmdline_length as usize;
+    if remainder.len() < image_size + cmdline_len {
+        return None;
+    }
+    let json_bytes = &remainder[image_size..image_size + cmdline_len];
+    let value: serde_json::Value = serde_json::from_slice(json_bytes).ok()?;
+    value["version"].as_u64().map(|v| v as u8)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use claudebox_witness::{WitnessEvent, writer::WitnessWriter};
+
+    fn build_test_rvf(path: &std::path::Path) {
+        use claudebox_core::manifest::*;
+        let manifest = ClaudeBoxManifest {
+            version: 1,
+            project_id: "migrate-test".into(),
+            project_name: "migrate-test".into(),
+            language: LanguageProfile::Single(SingleProfile { lang: Lang::Node, version: "22".into() }),
+            created_at: "2026-05-19T00:00:00Z".into(),
+            kernel_built_at: "2026-05-19T00:00:00Z".into(),
+            network: NetworkPolicy { allow_domains: vec![], allow_localhost: false, dns_server: "1.1.1.1".into() },
+            resources: ResourceLimits::default(),
+            kernel: KernelConfig { arch: "x86_64".into(), ssh_port: 2222, mcp_port: 7878 },
+            witness: WitnessPolicy::default(),
+        };
+        claudebox_rvf::builder::ApplianceBuilder::new(manifest)
+            .unwrap()
+            .build_skeleton(path, None)
+            .unwrap();
+    }
 
     #[test]
     #[ignore = "full impl after V1ToV2Migrator struct exists"]
@@ -111,17 +179,25 @@ mod tests {
     }
 
     #[test]
-    fn test_check_and_migrate_stub_returns_ok() {
-        // Stub returns Ok(()) for any path until rvf-runtime is wired.
-        // FIXME: replace with real assertions once check_and_migrate reads the RVF schema version.
-        let result = check_and_migrate(std::path::Path::new("/tmp/test.rvf"), true);
-        assert!(result.is_ok());
+    fn test_check_and_migrate_missing_file_returns_error() {
+        let result = check_and_migrate(std::path::Path::new("/tmp/claudebox-test-nonexistent-xyzabc.rvf"), true);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[test]
-    fn test_check_and_migrate_no_auto_migrate_stub_returns_ok() {
-        // FIXME: once implemented, false should prevent minor auto-migration.
-        let result = check_and_migrate(std::path::Path::new("/tmp/test.rvf"), false);
+    fn test_read_schema_version_missing_file_returns_none() {
+        let result = read_schema_version(std::path::Path::new("/tmp/claudebox-no-such-file.rvf"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_and_migrate_existing_v1_rvf_passes() {
+        // Build a real v1 RVF via ApplianceBuilder and verify check_and_migrate returns Ok.
+        let dir = tempfile::tempdir().unwrap();
+        let rvf = dir.path().join("test.rvf");
+        build_test_rvf(&rvf);
+        let result = check_and_migrate(&rvf, false);
         assert!(result.is_ok());
     }
 

@@ -8,8 +8,13 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 rvf-runtime = { workspace = true }
+rvf-types = { workspace = true }
+serde_json = { workspace = true }
 claudebox-witness = { path = "../claudebox-witness" }
 
 [dev-dependencies]
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }
+tempfile = "3"
+claudebox-rvf = { path = "../claudebox-rvf" }
+claudebox-core = { path = "../claudebox-core" }
