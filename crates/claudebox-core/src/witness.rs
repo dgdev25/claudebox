@@ -33,6 +33,17 @@ pub fn witness_archive_dir(rvf_path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.witness-archives", rvf_path.display()))
 }
 
+/// Path of the META session-state JSON sidecar for a given `.rvf` file.
+///
+/// rvf-runtime exposes no public META_SEG reader, so per-session state
+/// (task context, history, scratchpad) is persisted as a JSON sidecar
+/// alongside the `.rvf` instead.
+///
+/// `foo/appliance.rvf` → `foo/appliance.rvf.meta.json`
+pub fn meta_sidecar_path(rvf_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.meta.json", rvf_path.display()))
+}
+
 /// Load all `WitnessEntry` records from the `.witness` JSONL sidecar.
 ///
 /// Returns an empty `Vec` when the file does not exist.
