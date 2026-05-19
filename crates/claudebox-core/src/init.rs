@@ -37,6 +37,39 @@ fn parse_lang_spec(spec: &str) -> anyhow::Result<SingleProfile> {
     Ok(SingleProfile { lang, version })
 }
 
+fn detect_lang_profiles(project_dir: &Path) -> Vec<SingleProfile> {
+    let mut profiles = Vec::new();
+
+    if project_dir.join("package.json").exists() {
+        profiles.push(SingleProfile {
+            lang: Lang::Node,
+            version: "latest".to_string(),
+        });
+    }
+    if project_dir.join("pyproject.toml").exists()
+        || project_dir.join("requirements.txt").exists()
+    {
+        profiles.push(SingleProfile {
+            lang: Lang::Python,
+            version: "latest".to_string(),
+        });
+    }
+    if project_dir.join("Cargo.toml").exists() {
+        profiles.push(SingleProfile {
+            lang: Lang::Rust,
+            version: "latest".to_string(),
+        });
+    }
+    if project_dir.join("go.mod").exists() {
+        profiles.push(SingleProfile {
+            lang: Lang::Go,
+            version: "latest".to_string(),
+        });
+    }
+
+    profiles
+}
+
 /// Build a [`ClaudeBoxManifest`] from `InitOptions` without performing any I/O.
 ///
 /// Language strings are parsed into [`SingleProfile`]s, the network policy is
@@ -96,13 +129,32 @@ pub fn build_manifest_from_opts(opts: &InitOptions) -> anyhow::Result<ClaudeBoxM
 /// Stub: parses the manifest and returns it for the caller to use.
 /// Appliance file writing is handled by the CLI layer (which has access to
 /// both `claudebox-core` and `claudebox-rvf` without a circular dependency).
-pub async fn run_init(opts: InitOptions, _output_dir: &Path) -> anyhow::Result<ClaudeBoxManifest> {
+pub async fn run_init(opts: InitOptions, output_dir: &Path) -> anyhow::Result<ClaudeBoxManifest> {
+    let mut opts = opts;
+    if opts.lang.is_empty() {
+        let detected = detect_lang_profiles(output_dir);
+        if !detected.is_empty() {
+            opts.lang = detected
+                .into_iter()
+                .map(|p| {
+                    let name = match p.lang {
+                        Lang::Node => "node",
+                        Lang::Python => "python",
+                        Lang::Rust => "rust",
+                        Lang::Go => "go",
+                    };
+                    format!("{name}@{}", p.version)
+                })
+                .collect();
+        }
+    }
     build_manifest_from_opts(&opts)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_init_manifest_built_correctly_for_single_lang() {
@@ -123,5 +175,16 @@ mod tests {
             .network
             .allow_domains
             .contains(&"registry.npmjs.org".to_string()));
+    }
+
+    #[test]
+    fn test_detect_lang_profiles_node_and_rust() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname='x'\nversion='0.1.0'\n").unwrap();
+
+        let detected = detect_lang_profiles(dir.path());
+        assert!(detected.iter().any(|p| matches!(p.lang, Lang::Node)));
+        assert!(detected.iter().any(|p| matches!(p.lang, Lang::Rust)));
     }
 }

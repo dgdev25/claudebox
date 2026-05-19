@@ -26,8 +26,10 @@ cargo build --release
 
 ```bash
 cd /path/to/project
-claudebox init myapp --lang node@22 --kernel-from ~/.claudebox/kernels/$(uname -m)/kernel
+claudebox init myapp --kernel-from ~/.claudebox/kernels/$(uname -m)/kernel
 ```
+
+`--lang` is optional. If omitted, claudebox auto-detects from project files (`package.json`, `pyproject.toml`, `requirements.txt`, `Cargo.toml`, `go.mod`).
 
 2. Start the VM:
 

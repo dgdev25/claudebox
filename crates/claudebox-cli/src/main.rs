@@ -14,6 +14,8 @@ pub struct Cli {
 pub enum Commands {
     Init {
         name: String,
+        /// Optional language profile(s): `node@22`, `python@3.12`, `rust@1.87`, `go@1.22`.
+        /// If omitted, claudebox auto-detects from project files when possible.
         #[arg(long, value_delimiter = ',', num_args = 1..)]
         lang: Vec<String>,
         #[arg(long)]

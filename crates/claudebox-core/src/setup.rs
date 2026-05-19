@@ -94,7 +94,7 @@ pub fn run_setup(force: bool) -> Result<()> {
     setup_rootfs_macos(&rootfs_dir, force)?;
 
     eprintln!("\nSetup complete. Get started:");
-    eprintln!("  claudebox init myapp --lang node@22");
+    eprintln!("  claudebox init myapp    # --lang optional (auto-detected if possible)");
     eprintln!("  claudebox start myapp.rvf");
 
     Ok(())
