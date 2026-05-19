@@ -1,0 +1,50 @@
+[package]
+name = "claudebox-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "claudebox"
+path = "src/main.rs"
+
+[dependencies]
+claudebox-core = { path = "../claudebox-core" }
+claudebox-rvf = { path = "../claudebox-rvf" }
+claudebox-firecracker = { path = "../claudebox-firecracker" }
+claudebox-vec = { path = "../claudebox-vec" }
+claudebox-witness = { path = "../claudebox-witness" }
+claudebox-meta = { path = "../claudebox-meta" }
+claudebox-migrate = { path = "../claudebox-migrate" }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+name = "test_init"
+path = "tests/integration/test_init.rs"
+
+[[test]]
+name = "test_witness"
+path = "tests/integration/test_witness.rs"
+
+[[test]]
+name = "test_vec"
+path = "tests/integration/test_vec.rs"
+
+[[test]]
+name = "test_boot"
+path = "tests/integration/test_boot.rs"
+
+[[test]]
+name = "test_kernel"
+path = "tests/integration/test_kernel.rs"
+
+[[test]]
+name = "test_snapshot"
+path = "tests/integration/test_snapshot.rs"

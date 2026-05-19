@@ -1,0 +1,15 @@
+[package]
+name = "claudebox-logd"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "claudebox-logd"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

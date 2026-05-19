@@ -1,0 +1,22 @@
+[package]
+name = "claudebox-meta"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+# claudebox-witness: reserved for Phase 11 witness event appending
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = { workspace = true }
+
+[[bin]]
+name = "claudebox-meta-export"
+path = "src/bin/meta_export.rs"
+
+[[bin]]
+name = "claudebox-meta-save"
+path = "src/bin/meta_save.rs"
