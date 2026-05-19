@@ -8,6 +8,7 @@ claudebox-core = { path = "../claudebox-core" }
 claudebox-witness = { path = "../claudebox-witness" }
 rvf-runtime = { workspace = true }
 rvf-crypto = { workspace = true }
+rvf-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ed25519-dalek = { workspace = true }

@@ -1,3 +1,5 @@
 .worktrees/
 docs/plans/.DS_Store
 target/
+kernels/bzImage
+*.DS_Store

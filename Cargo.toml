@@ -14,9 +14,9 @@ members = [
 ]
 
 [workspace.dependencies]
-rvf-runtime = "0.2"
-rvf-crypto = "0.2"
-rvf-types = "0.1"
+rvf-runtime = { path = "/Users/lyle.degroot/dev/referencerepos/ruvector/crates/rvf/rvf-runtime" }
+rvf-crypto = { path = "/Users/lyle.degroot/dev/referencerepos/ruvector/crates/rvf/rvf-crypto" }
+rvf-types = { path = "/Users/lyle.degroot/dev/referencerepos/ruvector/crates/rvf/rvf-types" }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

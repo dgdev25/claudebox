@@ -157,11 +157,41 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Start { rvf, workspace } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            claudebox_core::start::run_start(claudebox_core::start::StartOptions {
-                rvf,
-                workspace,
-            })
-            .await?;
+            let opts = claudebox_core::start::StartOptions {
+                rvf: rvf.clone(),
+                workspace: workspace.clone(),
+            };
+            let extracted = claudebox_core::start::extract_kernel(&opts)?;
+
+            // Build initramfs
+            let tmp_dir = extracted.kernel_path.parent().unwrap().to_path_buf();
+            let initramfs_path =
+                claudebox_firecracker::initramfs::build_initramfs(&tmp_dir).ok();
+
+            // Build and spawn QEMU
+            let mut qemu_cmd = claudebox_firecracker::qemu::build_qemu_command(
+                &extracted.kernel_path,
+                initramfs_path.as_deref(),
+                extracted.ssh_port,
+                512,
+                &workspace,
+            )?;
+
+            eprintln!(
+                "Launching QEMU for {} (ssh_port={})…",
+                rvf.display(),
+                extracted.ssh_port
+            );
+
+            let status = qemu_cmd
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("failed to spawn QEMU: {e}"))?
+                .wait()
+                .map_err(|e| anyhow::anyhow!("QEMU wait failed: {e}"))?;
+
+            if !status.success() {
+                anyhow::bail!("QEMU exited with status {status}");
+            }
         }
         Commands::Stop { rvf } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;

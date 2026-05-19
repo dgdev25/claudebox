@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 pub fn check_dependencies() -> Result<()> {
+    check_single_dep("qemu-system-x86_64", "7.0.0")?;
     check_single_dep("firecracker", "1.7.0")?;
     check_single_dep("virtiofsd", "0.1.0")?;
     check_single_dep("clang", "15.0.0")?;

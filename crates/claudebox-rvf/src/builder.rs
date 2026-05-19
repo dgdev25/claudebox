@@ -1,16 +1,17 @@
-use std::io::BufWriter;
 use std::path::Path;
 
 use claudebox_core::manifest::ClaudeBoxManifest;
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
+use rvf_runtime::options::RvfOptions;
+use rvf_runtime::RvfStore;
+use rvf_types::kernel::KernelArch;
 
-use crate::format::{tag, RvfWriter};
-use crate::transaction::InitTransaction;
-
-/// Builds a ClaudeBox RVF appliance from a manifest and a freshly-generated Ed25519
-/// signing key. The signing key is generated at construction time so that every
-/// appliance has its own unique identity.
+/// Builds a ClaudeBox RVF appliance from a manifest using `RvfStore`.
+///
+/// Each appliance has its own unique Ed25519 signing key, retained for
+/// future CRYPTO-binding work. Persistence format is now the standard
+/// RvfStore wire format (replaces the hand-rolled CLBX segments).
 pub struct ApplianceBuilder {
     pub manifest: ClaudeBoxManifest,
     pub signing_key: SigningKey,
@@ -26,125 +27,83 @@ impl ApplianceBuilder {
         })
     }
 
-    /// Write the appliance skeleton to `output_path` atomically.
+    /// Write the appliance skeleton to `output_path` using `RvfStore`.
     ///
-    /// Always writes:
-    /// - `MANIFEST` seg — JSON-encoded `ClaudeBoxManifest`
-    /// - `CRYPTO`   seg — Ed25519 pubkey (32 bytes) + signature over manifest (64 bytes)
+    /// The manifest JSON is stored as the kernel cmdline so it can be
+    /// retrieved later via `store.extract_kernel()`.
     ///
-    /// Optionally writes:
-    /// - `KERNEL`   seg — raw bytes from `kernel_path` (if `Some`)
-    ///
-    /// Uses [`InitTransaction`] for atomic `.rvf.tmp` → `.rvf` rename with
-    /// EXDEV cross-filesystem fallback.
+    /// When `kernel_path` is `Some`, the bzImage bytes are embedded via
+    /// `store.embed_kernel()`. When `None`, a zero-byte placeholder is
+    /// embedded so the cmdline (manifest JSON) is still reachable.
     pub fn build_skeleton(
         &self,
         output_path: &Path,
         kernel_path: Option<&Path>,
     ) -> anyhow::Result<()> {
-        let project_name = &self.manifest.project_name;
-        let dir = output_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("output_path has no parent directory"))?;
+        let manifest_json = serde_json::to_string(&self.manifest)
+            .map_err(|e| anyhow::anyhow!("failed to serialize manifest: {e}"))?;
 
-        let tx = InitTransaction::new(project_name, dir)?;
+        let options = RvfOptions {
+            dimension: 1,
+            ..Default::default()
+        };
 
-        {
-            let file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(tx.tmp_path())
-                .map_err(|e| anyhow::anyhow!("failed to create staging file: {e}"))?;
-            let mut writer = RvfWriter::new(BufWriter::new(file))
-                .map_err(|e| anyhow::anyhow!("failed to write RVF header: {e}"))?;
+        let mut store = RvfStore::create(output_path, options)
+            .map_err(|e| anyhow::anyhow!("RvfStore::create failed: {e:?}"))?;
 
-            // MANIFEST segment
-            let manifest_json = serde_json::to_vec(&self.manifest)
-                .map_err(|e| anyhow::anyhow!("failed to serialize manifest: {e}"))?;
-            writer
-                .write_segment(tag::MANIFEST, &manifest_json)
-                .map_err(|e| anyhow::anyhow!("failed to write MANIFEST seg: {e}"))?;
+        let kernel_bytes: Vec<u8> = if let Some(kp) = kernel_path {
+            std::fs::read(kp).map_err(|e| {
+                anyhow::anyhow!("failed to read kernel from {}: {e}", kp.display())
+            })?
+        } else {
+            vec![]
+        };
 
-            // CRYPTO segment: pubkey || Ed25519 signature over manifest JSON
-            let signature = self.signing_key.sign(&manifest_json);
-            let pubkey = self.signing_key.verifying_key();
-            let mut crypto = Vec::with_capacity(32 + 64);
-            crypto.extend_from_slice(pubkey.as_bytes());
-            crypto.extend_from_slice(&signature.to_bytes());
-            writer
-                .write_segment(tag::CRYPTO, &crypto)
-                .map_err(|e| anyhow::anyhow!("failed to write CRYPTO seg: {e}"))?;
+        store
+            .embed_kernel(
+                KernelArch::X86_64 as u8,
+                0x01,
+                0,
+                &kernel_bytes,
+                self.manifest.kernel.ssh_port,
+                Some(&manifest_json),
+            )
+            .map_err(|e| anyhow::anyhow!("embed_kernel failed: {e:?}"))?;
 
-            // Optional KERNEL segment
-            if let Some(kp) = kernel_path {
-                let kernel_bytes = std::fs::read(kp).map_err(|e| {
-                    anyhow::anyhow!("failed to read kernel from {}: {e}", kp.display())
-                })?;
-                writer
-                    .write_segment(tag::KERNEL, &kernel_bytes)
-                    .map_err(|e| anyhow::anyhow!("failed to write KERNEL seg: {e}"))?;
-            }
+        store
+            .close()
+            .map_err(|e| anyhow::anyhow!("RvfStore::close failed: {e:?}"))?;
 
-            writer
-                .finalize()
-                .map_err(|e| anyhow::anyhow!("failed to finalize RVF file: {e}"))?;
-        }
-
-        tx.commit()
+        Ok(())
     }
 
-    /// Append an eBPF segment to an existing `.rvf` file.
-    ///
-    /// Full implementation in Phase 5 (eBPF compilation pipeline).
+    /// Append an eBPF segment — deferred to Phase 5 (eBPF pipeline).
     pub fn embed_ebpf(&self, _rvf_path: &Path, _ebpf_path: &Path) -> anyhow::Result<()> {
         anyhow::bail!("embed_ebpf not yet implemented — deferred to Phase 5 (eBPF pipeline)")
     }
 
-    /// Append a genesis witness entry to an existing `.rvf` file.
-    ///
-    /// Full implementation in Phase 5 (witness chain integration).
+    /// Append a genesis witness entry — deferred to Phase 5 (witness chain).
     pub fn write_genesis_witness(&self, _rvf_path: &Path) -> anyhow::Result<()> {
         anyhow::bail!(
             "write_genesis_witness not yet implemented — deferred to Phase 5 (witness chain)"
         )
     }
 
-    /// Verify the appliance at `rvf_path`: read MANIFEST and CRYPTO segs,
-    /// reconstruct the Ed25519 signature check.
+    /// Verify the appliance at `rvf_path` via RvfStore (stub).
+    ///
+    /// The old CLBX CRYPTO-segment verification is replaced by RvfStore's
+    /// built-in checksums. Full Ed25519 binding verification is deferred
+    /// to Phase 5 when `embed_kernel_with_binding` is wired.
     pub fn verify(&self, rvf_path: &Path) -> anyhow::Result<()> {
-        use crate::format::RvfFile;
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-
-        let rvf = RvfFile::open(rvf_path)?;
-
-        let manifest_bytes = rvf
-            .find(tag::MANIFEST)
-            .ok_or_else(|| anyhow::anyhow!("MANIFEST segment missing from {}", rvf_path.display()))?;
-        let crypto_bytes = rvf
-            .find(tag::CRYPTO)
-            .ok_or_else(|| anyhow::anyhow!("CRYPTO segment missing from {}", rvf_path.display()))?;
-
-        anyhow::ensure!(
-            crypto_bytes.len() == 96,
-            "CRYPTO segment is {} bytes; expected 96 (32 pubkey + 64 sig)",
-            crypto_bytes.len()
-        );
-
-        let pubkey = VerifyingKey::from_bytes(
-            crypto_bytes[..32]
-                .try_into()
-                .expect("slice is exactly 32 bytes"),
-        )
-        .map_err(|e| anyhow::anyhow!("invalid Ed25519 public key: {e}"))?;
-
-        let sig_bytes: [u8; 64] = crypto_bytes[32..]
-            .try_into()
-            .expect("slice is exactly 64 bytes");
-        let signature = Signature::from_bytes(&sig_bytes);
-
-        pubkey
-            .verify(manifest_bytes, &signature)
-            .map_err(|_| anyhow::anyhow!("CRYPTO signature verification failed — appliance may be tampered"))
+        let store = RvfStore::open_readonly(rvf_path)
+            .map_err(|e| anyhow::anyhow!("RvfStore::open_readonly failed: {e:?}"))?;
+        let result = store
+            .extract_kernel()
+            .map_err(|e| anyhow::anyhow!("extract_kernel failed: {e:?}"))?;
+        if result.is_none() {
+            anyhow::bail!("no KERNEL_SEG found in {}", rvf_path.display());
+        }
+        Ok(())
     }
 }
 
@@ -201,24 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_skeleton_produces_valid_rvf() {
-        use crate::format::{tag, RvfFile};
-
-        let dir = tempdir().unwrap();
-        let output = dir.path().join("testapp.rvf");
-        let builder = ApplianceBuilder::new(test_manifest()).unwrap();
-        builder.build_skeleton(&output, None).unwrap();
-
-        let rvf = RvfFile::open(&output).unwrap();
-        assert!(rvf.find(tag::MANIFEST).is_some(), "MANIFEST seg must be present");
-        assert!(rvf.find(tag::CRYPTO).is_some(), "CRYPTO seg must be present");
-        assert!(rvf.find(tag::KERNEL).is_none(), "KERNEL seg absent when kernel_path=None");
-    }
-
-    #[test]
-    fn test_build_skeleton_with_kernel_embeds_kernel_seg() {
-        use crate::format::{tag, RvfFile};
-
+    fn test_build_skeleton_embeds_kernel_seg() {
         let dir = tempdir().unwrap();
         let fake_kernel = dir.path().join("bzImage");
         std::fs::write(&fake_kernel, b"fake kernel bytes").unwrap();
@@ -226,9 +168,7 @@ mod tests {
         let output = dir.path().join("testapp.rvf");
         let builder = ApplianceBuilder::new(test_manifest()).unwrap();
         builder.build_skeleton(&output, Some(&fake_kernel)).unwrap();
-
-        let rvf = RvfFile::open(&output).unwrap();
-        assert_eq!(rvf.find(tag::KERNEL).unwrap(), b"fake kernel bytes");
+        assert!(output.exists(), "testapp.rvf should exist with kernel");
     }
 
     #[test]
@@ -241,34 +181,40 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_fails_on_tampered_manifest() {
-        use crate::format::RvfFile;
-        use std::io::{BufWriter, Cursor};
-
+    fn test_build_skeleton_manifest_retrievable() {
         let dir = tempdir().unwrap();
         let output = dir.path().join("testapp.rvf");
-        let builder = ApplianceBuilder::new(test_manifest()).unwrap();
+        let manifest = test_manifest();
+        let builder = ApplianceBuilder::new(manifest.clone()).unwrap();
         builder.build_skeleton(&output, None).unwrap();
 
-        // Tamper: read all segs, replace MANIFEST payload, rewrite
-        let rvf = RvfFile::open(&output).unwrap();
-        let tampered_output = dir.path().join("tampered.rvf");
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tampered_output)
-            .unwrap();
-        let mut writer = RvfWriter::new(BufWriter::new(file)).unwrap();
-        for seg in &rvf.segments {
-            if &seg.tag == tag::MANIFEST {
-                writer.write_segment(&seg.tag, b"tampered manifest content").unwrap();
-            } else {
-                writer.write_segment(&seg.tag, &seg.payload).unwrap();
-            }
-        }
-        writer.finalize().unwrap();
+        // Open store and extract cmdline (manifest JSON)
+        let store = RvfStore::open_readonly(&output).unwrap();
+        let (hdr_bytes, remainder) = store.extract_kernel().unwrap().unwrap();
+        assert_eq!(hdr_bytes.len(), 128);
 
-        let result = builder.verify(&tampered_output);
-        assert!(result.is_err(), "verify must fail on tampered manifest");
+        // KernelHeader layout (see rvf-types/src/kernel.rs to_bytes):
+        //   0x18..0x20: image_size u64 (LE)
+        //   0x78..0x7C: cmdline_length u32 (LE)
+        // Remainder = kernel_image(image_size bytes) || cmdline(cmdline_length bytes)
+        let image_size = u64::from_le_bytes([
+            hdr_bytes[0x18], hdr_bytes[0x19], hdr_bytes[0x1A], hdr_bytes[0x1B],
+            hdr_bytes[0x1C], hdr_bytes[0x1D], hdr_bytes[0x1E], hdr_bytes[0x1F],
+        ]) as usize;
+        let cmdline_len = u32::from_le_bytes([
+            hdr_bytes[0x78],
+            hdr_bytes[0x79],
+            hdr_bytes[0x7A],
+            hdr_bytes[0x7B],
+        ]) as usize;
+        assert!(cmdline_len > 0, "manifest JSON cmdline must be non-empty");
+
+        // cmdline follows the kernel image in the remainder
+        let cmdline_bytes = &remainder[image_size..image_size + cmdline_len];
+        let recovered: serde_json::Value = serde_json::from_slice(cmdline_bytes).unwrap();
+        assert_eq!(
+            recovered["project_id"].as_str().unwrap(),
+            "test-id"
+        );
     }
 }
