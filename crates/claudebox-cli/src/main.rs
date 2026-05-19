@@ -175,59 +175,104 @@ async fn main() -> anyhow::Result<()> {
             git_commit_rvf(&output_path, &output_dir);
         }
         Commands::Start { rvf, workspace, rootfs } => {
-            // Auto-detect rootfs from setup data dir on macOS when flag not supplied.
-            let rootfs = rootfs.or_else(|| {
-                #[cfg(target_os = "macos")]
-                {
-                    let default = claudebox_core::setup::default_rootfs_path();
-                    if default.exists() { return Some(default); }
-                }
-                None
-            });
-
             claudebox_migrate::check_and_migrate(&rvf, true)?;
+
             let opts = claudebox_core::start::StartOptions {
                 rvf: rvf.clone(),
                 workspace: workspace.clone(),
             };
             let extracted = claudebox_core::start::extract_kernel(&opts)?;
 
-            // Try to build initramfs; on macOS this will fail — caller uses --rootfs instead
-            let tmp_dir = extracted.kernel_path.parent().unwrap().to_path_buf();
-            let initramfs_path = claudebox_firecracker::initramfs::build_initramfs(&tmp_dir).ok();
+            // Parse the manifest embedded in the .rvf to get project_id and target arch.
+            let manifest: claudebox_core::manifest::ClaudeBoxManifest =
+                serde_json::from_str(&extracted.manifest_json)
+                    .map_err(|e| anyhow::anyhow!("corrupt manifest in rvf: {e}"))?;
+            let guest_arch = manifest.kernel.arch.clone();
 
-            if initramfs_path.is_none() && rootfs.is_none() {
+            // Initramfs: loads virtio-blk + ext4 modules so the kernel finds /dev/vda.
+            let initramfs_path: Option<std::path::PathBuf> = {
+                let setup_initramfs = claudebox_core::setup::default_initramfs_path();
+                if setup_initramfs.exists() {
+                    Some(setup_initramfs)
+                } else {
+                    // Linux-only fallback: build a minimal initramfs on the fly.
+                    let tmp_dir = extracted
+                        .kernel_path
+                        .parent()
+                        .ok_or_else(|| anyhow::anyhow!("kernel path has no parent"))?
+                        .to_path_buf();
+                    claudebox_firecracker::initramfs::build_initramfs(&tmp_dir).ok()
+                }
+            };
+
+            // Root disk: prefer explicit --rootfs, then per-arch default from setup.
+            let base_rootfs = rootfs.or_else(|| {
+                let default = claudebox_core::setup::default_rootfs_path();
+                if default.exists() { Some(default) } else { None }
+            });
+
+            if initramfs_path.is_none() && base_rootfs.is_none() {
                 anyhow::bail!(
-                    "No initramfs could be built and no --rootfs supplied.\n\
-                     macOS: claudebox start <rvf> --rootfs <alpine.qcow2>\n\
-                     Download Alpine: curl -fLO https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-virt-3.21.0-x86_64.iso"
+                    "No initramfs found and no root disk available.\n\
+                     Run `claudebox setup` to download kernel and dev image."
                 );
             }
 
-            // Resolve workspace to an absolute path so QEMU receives a stable path.
-            let workspace_abs = workspace.canonicalize().unwrap_or(workspace.clone());
+            // Create a per-instance qcow2 overlay so the base image stays read-only
+            // and multiple VMs can run concurrently without locking conflicts.
+            let disk_path = if let Some(base) = &base_rootfs {
+                let overlay = claudebox_core::setup::instance_overlay_path(
+                    &manifest.project_id,
+                );
+                claudebox_firecracker::qemu::create_instance_overlay(base, &overlay)?;
+                Some(overlay)
+            } else {
+                None
+            };
 
-            // Build and spawn QEMU
+            let workspace_abs = workspace
+                .canonicalize()
+                .unwrap_or_else(|_| workspace.clone());
+
             let mut qemu_cmd = claudebox_firecracker::qemu::build_qemu_command(
                 &extracted.kernel_path,
                 initramfs_path.as_deref(),
                 extracted.ssh_port,
                 512,
-                rootfs.as_deref(),
+                disk_path.as_deref(),
                 Some(&workspace_abs),
+                &guest_arch,
             )?;
 
             eprintln!(
-                "Launching QEMU for {} (ssh_port={})…",
+                "Launching QEMU ({guest_arch}) for {} (ssh_port={})…",
                 rvf.display(),
                 extracted.ssh_port
             );
 
-            let status = qemu_cmd
+            // Spawn QEMU and write its PID so `claudebox stop` can signal it.
+            let child = qemu_cmd
                 .spawn()
-                .map_err(|e| anyhow::anyhow!("failed to spawn QEMU: {e}"))?
+                .map_err(|e| anyhow::anyhow!("failed to spawn QEMU: {e}"))?;
+
+            let pid_path = claudebox_core::setup::instance_pid_path(
+                &manifest.project_id,
+            );
+            if let Some(parent) = pid_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&pid_path, child.id().to_string());
+
+            eprintln!("VM running (PID {}). SSH: ssh -p {} root@localhost", child.id(), extracted.ssh_port);
+            eprintln!("Password: claudebox");
+
+            // Wait for QEMU to exit (foreground; stop via Ctrl-C or `claudebox stop`).
+            let mut child = child;
+            let status = child
                 .wait()
                 .map_err(|e| anyhow::anyhow!("QEMU wait failed: {e}"))?;
+
+            let _ = std::fs::remove_file(&pid_path);
 
             if !status.success() {
                 anyhow::bail!("QEMU exited with status {status}");

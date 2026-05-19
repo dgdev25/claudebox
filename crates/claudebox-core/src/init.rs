@@ -83,7 +83,7 @@ pub fn build_manifest_from_opts(opts: &InitOptions) -> anyhow::Result<ClaudeBoxM
         network,
         resources: ResourceLimits::default(),
         kernel: KernelConfig {
-            arch: "x86_64".into(),
+            arch: std::env::consts::ARCH.into(),
             ssh_port: 2222,
             mcp_port: 7878,
         },

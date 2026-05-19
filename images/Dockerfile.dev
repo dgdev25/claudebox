@@ -40,7 +40,7 @@ RUN ssh-keygen -A && \
     sed -i \
         -e 's|#*PermitRootLogin.*|PermitRootLogin yes|' \
         -e 's|#*PasswordAuthentication.*|PasswordAuthentication yes|' \
-        -e 's|#*UsePAM.*|UsePAM no|' \
+        -e '/UsePAM/d' \
         /etc/ssh/sshd_config
 
 # OpenRC: enable sshd and networking on boot
@@ -48,12 +48,22 @@ RUN rc-update add sshd default && \
     rc-update add networking default && \
     rc-update add hostname default
 
-# Serial console on ttyS0 (QEMU -nographic)
-RUN echo 'ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' >> /etc/inittab
+# Serial console — ttyAMA0 for aarch64 (PL011 UART), ttyS0 for x86_64 (8250)
+# Both are added; the kernel only probes the device that exists on the machine.
+RUN echo 'ttyAMA0::respawn:/sbin/getty -L ttyAMA0 115200 vt100' >> /etc/inittab && \
+    echo 'ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' >> /etc/inittab
 
-# Network: DHCP on eth0 (user-mode QEMU networking)
-RUN printf 'auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n' \
-    > /etc/network/interfaces
+# Network: static config for QEMU SLIRP user networking.
+# SLIRP always assigns 10.0.2.15 to the guest; dhcpcd's BPF BOOTP helper
+# fails in SLIRP, so we configure the known address statically.
+RUN printf 'auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet static\n    address 10.0.2.15\n    netmask 255.255.255.0\n    gateway 10.0.2.2\n' > /etc/network/interfaces
+# DNS for SLIRP — written at boot via /etc/local.d/resolv.sh because
+# /etc/resolv.conf is a bind-mount during Docker build (read-only).
+RUN mkdir -p /etc/local.d && \
+    printf '#!/bin/sh\necho nameserver 10.0.2.3 > /etc/resolv.conf\n' \
+    > /etc/local.d/resolv.start && \
+    chmod +x /etc/local.d/resolv.start && \
+    rc-update add local default
 
 # Filesystem table: root on /dev/vda, workspace via virtio-9p
 # nofail: boot succeeds even if host didn't pass -virtfs (e.g. initramfs path)
@@ -62,6 +72,10 @@ RUN printf '/dev/vda\t/\text4\tdefaults\t0 1\n' > /etc/fstab && \
 
 # Hostname
 RUN echo "claudebox" > /etc/hostname
+
+# Prevent OpenRC from detecting Docker export artifact and entering DOCKER mode,
+# which would skip the networking service and leave the VM without an IP.
+RUN echo 'rc_sys=""' >> /etc/rc.conf
 
 # Empty mountpoints for kernel to populate, plus /workspace for host project files
 RUN mkdir -p /dev /proc /sys /run /tmp /workspace && chmod 1777 /tmp

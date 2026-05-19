@@ -1,24 +1,24 @@
 <!-- TURBO:AUTO-START -->
 # Project: claudebox
 
-*Auto-generated at 2026-05-19 12:26 — do not edit between markers*
+*Auto-generated at 2026-05-19 14:09 — do not edit between markers*
 
 ## Git State
 - **Branch:** `main`
 - **Remote:** `https://github.com/dgdev25/claudebox.git`
-- **Commits:** 73
-- **Uncommitted changes:** 6 file(s)
+- **Commits:** 79
+- **Uncommitted changes:** 10 file(s)
 
 ### Recent Commits
 ```
+b5e5d93 feat(init): git safety net — commit .rvf on init, warn if no repo
+ef63d00 feat(workspace): mount host project directory into VM via virtio-9p
+cbe21b8 feat(distribution): add install.sh, release CI, and kernel download
+ac97687 feat(images): add claudebox-dev qcow2 build pipeline
+c86b073 feat(setup): add `claudebox setup` command for one-command installation
+b5ab5fe feat(firecracker): wire QEMU launch, macOS initramfs fallback, and clean clippy
 994ed0c feat(rvf,firecracker): switch to RvfStore, add QEMU launcher and initramfs builder
 90529fe feat: implement binary .rvf format and wire claudebox init
-e9fc04d feat: merge implement/claudebox-v1 — ClaudeBox full implementation
-c095483 feat(witness,firecracker): implement Ed25519 signature verification and socket-level VM status
-8492dd8 fix(rvf): handle EXDEV in InitTransaction::commit — fall back to copy+remove across filesystems
-08f0ef1 fix(codesec): apply all Critical/High/Medium/Low fixes from code review + security audit
-362d9fb refactor(config): extract config_path() helper to deduplicate path construction
-639b4e5 fix(migrate): guard future-version reads, fix tautological tests, remove TOCTOU in config
 ```
 
 ## Tech Stack
@@ -47,12 +47,16 @@ c095483 feat(witness,firecracker): implement Ed25519 signature verification and 
 crates/
 docs/
 ebpf/
+images/
 kernels/
+scripts/
 Cargo.toml
 CLAUDE.md
 ```
 
 <!-- TURBO:AUTO-END -->
+
+
 
 
 
