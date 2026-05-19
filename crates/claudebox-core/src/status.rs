@@ -57,11 +57,7 @@ pub fn format_status(info: &ProjectStatus) -> String {
         }
     }
 
-    lines.push(format!(
-        "Kernel:   {} days old{}",
-        info.kernel_age_days,
-        if info.kernel_stale { " — stale ⚠ run `claudebox upgrade-kernel`" } else { "" }
-    ));
+    lines.push(format!("Kernel:   {} days old", info.kernel_age_days));
 
     lines.push(format!(
         "Witness:  {} hot entries, {} archived month(s)",
@@ -78,7 +74,7 @@ pub fn format_status(info: &ProjectStatus) -> String {
 
     if info.kernel_stale {
         lines.push(format!(
-            "WARNING:  kernel is {} days old — run `claudebox upgrade-kernel` to update",
+            "⚠ WARNING: kernel is {} days old — run `claudebox upgrade-kernel` to update",
             info.kernel_age_days
         ));
     }
