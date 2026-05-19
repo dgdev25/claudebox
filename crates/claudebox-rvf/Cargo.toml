@@ -3,9 +3,14 @@ name = "claudebox-rvf"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+advanced-ebpf = ["dep:claudebox-ebpf"]
+
 [dependencies]
 claudebox-core = { path = "../claudebox-core" }
 claudebox-witness = { path = "../claudebox-witness" }
+claudebox-ebpf = { path = "../claudebox-ebpf", optional = true }
 rvf-runtime = { workspace = true }
 rvf-crypto = { workspace = true }
 rvf-types = { workspace = true }

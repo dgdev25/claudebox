@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+mod commands;
+
 #[derive(Parser)]
 #[command(name = "claudebox", about = "Per-project isolated Firecracker VM for Claude Code", version)]
 pub struct Cli {
@@ -139,427 +141,53 @@ async fn main() -> anyhow::Result<()> {
             lang,
             allow,
             kernel_from,
-        } => {
-            // Auto-detect kernel from setup data dir when flag not supplied.
-            let kernel_from = kernel_from.or_else(|| {
-                let default = claudebox_core::setup::default_kernel_path();
-                if default.exists() { Some(default) } else { None }
-            });
-
-            let output_dir = std::env::current_dir()?;
-            let manifest = claudebox_core::init::run_init(
-                claudebox_core::init::InitOptions {
-                    name,
-                    lang,
-                    allow,
-                    kernel_from: kernel_from.clone(),
-                },
-                &output_dir,
-            )
-            .await?;
-
-            let output_path = output_dir.join(format!("{}.rvf", manifest.project_name));
-            anyhow::ensure!(
-                !output_path.exists(),
-                "{} already exists — remove it before re-initialising",
-                output_path.display()
-            );
-
-            let builder = claudebox_rvf::builder::ApplianceBuilder::new(manifest)?;
-            builder.build_skeleton(&output_path, kernel_from.as_deref())?;
-
-            eprintln!("Created appliance: {}", output_path.display());
-            if kernel_from.is_none() {
-                eprintln!(
-                    "Note: no kernel embedded. Build one with Docker or supply \
-                     --kernel-from <bzImage> to enable `claudebox start`."
-                );
-            }
-
-            git_commit_rvf(&output_path, &output_dir);
-        }
-        Commands::Start { rvf, workspace, rootfs } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-
-            let opts = claudebox_core::start::StartOptions {
-                rvf: rvf.clone(),
-                workspace: workspace.clone(),
-            };
-            let extracted = claudebox_core::start::extract_kernel(&opts)?;
-
-            // Parse the manifest embedded in the .rvf to get project_id and target arch.
-            let manifest: claudebox_core::manifest::ClaudeBoxManifest =
-                serde_json::from_str(&extracted.manifest_json)
-                    .map_err(|e| anyhow::anyhow!("corrupt manifest in rvf: {e}"))?;
-            let guest_arch = manifest.kernel.arch.clone();
-
-            // Initramfs: loads virtio-blk + ext4 modules so the kernel finds /dev/vda.
-            let initramfs_path: Option<std::path::PathBuf> = {
-                let setup_initramfs = claudebox_core::setup::default_initramfs_path();
-                if setup_initramfs.exists() {
-                    Some(setup_initramfs)
-                } else {
-                    // Linux-only fallback: build a minimal initramfs on the fly.
-                    let tmp_dir = extracted
-                        .kernel_path
-                        .parent()
-                        .ok_or_else(|| anyhow::anyhow!("kernel path has no parent"))?
-                        .to_path_buf();
-                    claudebox_firecracker::initramfs::build_initramfs(&tmp_dir).ok()
-                }
-            };
-
-            // Root disk: prefer explicit --rootfs, then per-arch default from setup.
-            let base_rootfs = rootfs.or_else(|| {
-                let default = claudebox_core::setup::default_rootfs_path();
-                if default.exists() { Some(default) } else { None }
-            });
-
-            if initramfs_path.is_none() && base_rootfs.is_none() {
-                anyhow::bail!(
-                    "No initramfs found and no root disk available.\n\
-                     Run `claudebox setup` to download kernel and dev image."
-                );
-            }
-
-            // Create a per-instance qcow2 overlay so the base image stays read-only
-            // and multiple VMs can run concurrently without locking conflicts.
-            let disk_path = if let Some(base) = &base_rootfs {
-                let overlay = claudebox_core::setup::instance_overlay_path(
-                    &manifest.project_id,
-                );
-                claudebox_firecracker::qemu::create_instance_overlay(base, &overlay)?;
-                Some(overlay)
-            } else {
-                None
-            };
-
-            let workspace_abs = workspace
-                .canonicalize()
-                .unwrap_or_else(|_| workspace.clone());
-
-            let mut qemu_cmd = claudebox_firecracker::qemu::build_qemu_command(
-                &extracted.kernel_path,
-                initramfs_path.as_deref(),
-                extracted.ssh_port,
-                512,
-                disk_path.as_deref(),
-                Some(&workspace_abs),
-                &guest_arch,
-            )?;
-
-            eprintln!(
-                "Launching QEMU ({guest_arch}) for {} (ssh_port={})…",
-                rvf.display(),
-                extracted.ssh_port
-            );
-
-            // Spawn QEMU and write its PID so `claudebox stop` can signal it.
-            let child = qemu_cmd
-                .spawn()
-                .map_err(|e| anyhow::anyhow!("failed to spawn QEMU: {e}"))?;
-
-            let pid_path = claudebox_core::setup::instance_pid_path(
-                &manifest.project_id,
-            );
-            if let Some(parent) = pid_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(&pid_path, child.id().to_string());
-
-            eprintln!("VM running (PID {}). SSH: ssh -p {} root@localhost", child.id(), extracted.ssh_port);
-            eprintln!("Password: claudebox");
-
-            // Wait for QEMU to exit (foreground; stop via Ctrl-C or `claudebox stop`).
-            let mut child = child;
-            let status = child
-                .wait()
-                .map_err(|e| anyhow::anyhow!("QEMU wait failed: {e}"))?;
-
-            let _ = std::fs::remove_file(&pid_path);
-
-            if !status.success() {
-                anyhow::bail!("QEMU exited with status {status}");
-            }
-        }
+        } => commands::lifecycle::handle_init_command(name, lang, allow, kernel_from).await?,
+        Commands::Start { rvf, workspace, rootfs } =>
+            commands::lifecycle::handle_start_command(rvf, workspace, rootfs).await?,
         Commands::Stop { rvf } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
-            let pid_path = claudebox_core::setup::instance_pid_path(&manifest.project_id);
-            if !pid_path.exists() {
-                eprintln!("VM is not running (no PID file found).");
-            } else {
-                claudebox_core::stop::stop_instance(&pid_path)?;
-                eprintln!("VM stopped.");
-            }
+            commands::runtime::handle_stop_command(&rvf)?;
         }
-        Commands::Logs { rvf, .. } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("logs command not yet fully implemented")
-        }
+        Commands::Logs { rvf, follow, since } =>
+            commands::runtime::handle_logs_command(&rvf, follow, since.as_deref()).await?,
         Commands::Status { rvf } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
-            let pid_path = claudebox_core::setup::instance_pid_path(&manifest.project_id);
-            let vm_status = if let Ok(pid) = claudebox_core::stop::read_pid_file(&pid_path) {
-                let alive = std::process::Command::new("kill")
-                    .args(["-0", &pid.to_string()])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-                if alive {
-                    claudebox_core::status::VmStatusDisplay::Running {
-                        pid,
-                        ssh_port: manifest.kernel.ssh_port,
-                        mcp_port: manifest.kernel.mcp_port,
-                    }
-                } else {
-                    claudebox_core::status::VmStatusDisplay::Stopped
-                }
-            } else {
-                claudebox_core::status::VmStatusDisplay::Stopped
-            };
-
-            let rvf_size_mb = std::fs::metadata(&rvf)
-                .map(|m| m.len() / (1024 * 1024))
-                .unwrap_or(0);
-
-            let lang = match &manifest.language {
-                claudebox_core::manifest::LanguageProfile::Single(p) => {
-                    format!("{:?}@{}", p.lang, p.version).to_lowercase()
-                }
-                claudebox_core::manifest::LanguageProfile::Multi(ps) => ps
-                    .iter()
-                    .map(|p| format!("{:?}@{}", p.lang, p.version).to_lowercase())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            };
-
-            let info = claudebox_core::status::ProjectStatus {
-                project_name: manifest.project_name.clone(),
-                rvf_path: rvf.clone(),
-                rvf_size_mb,
-                vm_status,
-                language: lang,
-                kernel_age_days: 0,
-                kernel_stale: false,
-                witness_hot_entries: 0,
-                witness_archived_months: 0,
-                vec_chunks: 0,
-                vec_files: 0,
-                vec_tombstoned: 0,
-                schema_version: manifest.version,
-            };
-            println!("{}", claudebox_core::status::format_status(&info));
+            commands::runtime::handle_status_command(&rvf)?;
         }
         Commands::Branch { rvf, name } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
-            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
-            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
-            claudebox_core::snapshot::create_branch(&overlay, &name)?;
+            commands::storage::handle_branch_command(&rvf, &name)?;
         }
         Commands::Rollback { rvf, branch } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
-            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
-            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
-            claudebox_core::snapshot::rollback_to_branch(&overlay, &branch)?;
+            commands::storage::handle_rollback_command(&rvf, &branch)?;
         }
         Commands::Audit { rvf, archive, json } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let entries = if let Some(month) = archive {
-                let archive_dir = claudebox_core::witness::witness_archive_dir(&rvf);
-                let paths =
-                    claudebox_witness::compaction::find_archives_for_month(&archive_dir, &month)?;
-                anyhow::ensure!(
-                    !paths.is_empty(),
-                    "no archive files found for month {month} in {}",
-                    archive_dir.display()
-                );
-                let mut all = Vec::new();
-                for path in &paths {
-                    let mut e = claudebox_witness::read_jsonl_entries(path)?;
-                    all.append(&mut e);
-                }
-                all.sort_by_key(|e| e.seq);
-                all
-            } else {
-                claudebox_core::witness::load_witness_entries(&rvf)?
-            };
-            if json {
-                println!("{}", claudebox_witness::audit::format_audit_json(&entries)?);
-            } else {
-                println!("{}", claudebox_witness::audit::format_audit_table(&entries));
-            }
+            commands::maintenance::handle_audit_command(&rvf, archive, json)?;
         }
         Commands::Snapshot { rvf, action } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
-            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
-            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
-            let op = match action {
-                SnapshotAction::Create { name } =>
-                    claudebox_core::snapshot::SnapshotOp::Create(name),
-                SnapshotAction::List =>
-                    claudebox_core::snapshot::SnapshotOp::List,
-                SnapshotAction::Restore { name } =>
-                    claudebox_core::snapshot::SnapshotOp::Restore(name),
-                SnapshotAction::Export { name, output } =>
-                    claudebox_core::snapshot::SnapshotOp::Export { name, output },
-            };
-            claudebox_core::snapshot::run_snapshot(&overlay, op)?;
+            commands::storage::handle_snapshot_command(&rvf, action)?;
         }
         Commands::UpgradeKernel { rvf, kernel_from } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let kernel_path = kernel_from
-                .or_else(|| {
-                    let default = claudebox_core::setup::default_kernel_path();
-                    if default.exists() { Some(default) } else { None }
-                })
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "no new kernel found; pass --kernel-from <path> or run `claudebox setup` first"
-                    )
-                })?;
-            let upgrader = claudebox_rvf::kernel_upgrade::KernelUpgrader { rvf_path: rvf.clone() };
-            let result = upgrader.upgrade(&kernel_path).await?;
-            println!("Kernel upgraded:");
-            println!("  from: {}", result.from_hash);
-            println!("  to:   {}", result.to_hash);
+            commands::lifecycle::handle_upgrade_kernel_command(&rvf, kernel_from).await?;
         }
         Commands::Kernel { rvf, action } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
-            match action {
-                KernelAction::Show => {
-                    println!("arch:         {}", manifest.kernel.arch);
-                    println!("ssh_port:     {}", manifest.kernel.ssh_port);
-                    println!("mcp_port:     {}", manifest.kernel.mcp_port);
-                    println!("kernel_built: {}", manifest.kernel_built_at);
-                }
-                KernelAction::Cache => {
-                    let cache_dir = claudebox_core::setup::data_dir()
-                        .join("kernels")
-                        .join(&manifest.kernel.arch);
-                    std::fs::create_dir_all(&cache_dir)?;
-                    let opts = claudebox_core::start::StartOptions {
-                        rvf: rvf.clone(),
-                        workspace: std::path::PathBuf::from("."),
-                    };
-                    let extracted = claudebox_core::start::extract_kernel(&opts)?;
-                    let dest = cache_dir.join("kernel");
-                    std::fs::copy(&extracted.kernel_path, &dest)?;
-                    eprintln!("Kernel cached to {}", dest.display());
-                }
-            }
+            commands::lifecycle::handle_kernel_command(&rvf, action)?;
         }
         Commands::Migrate { rvf } => {
-            let schema_version = claudebox_migrate::read_schema_version(&rvf).unwrap_or(1);
-            let chain = claudebox_migrate::MigrationChain::new();
-            let latest = chain.latest_version();
-            if schema_version == latest {
-                eprintln!("Already at latest schema version (v{latest}), nothing to do.");
-            } else if schema_version > latest {
-                anyhow::bail!(
-                    "{} schema v{schema_version} is newer than this binary (max v{latest}); \
-                     upgrade claudebox",
-                    rvf.display()
-                );
-            } else {
-                eprintln!(
-                    "Migrating {} from v{schema_version} to v{latest}…",
-                    rvf.display()
-                );
-                let new_version = chain.migrate_to_latest(&rvf, schema_version)?;
-                eprintln!("Migration complete — now at v{new_version}.");
-            }
+            commands::maintenance::handle_migrate_command(&rvf)?;
         }
         Commands::Compact { rvf } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
-            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
-            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
-            claudebox_core::snapshot::compact_overlay(&overlay)?;
+            commands::storage::handle_compact_command(&rvf)?;
         }
         Commands::UpdateAllowlist { rvf, add, remove } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            claudebox_core::allowlist::run_update_allowlist(&rvf, add, remove).await?;
+            commands::maintenance::handle_update_allowlist_command(&rvf, add, remove).await?;
         }
         Commands::Destroy { rvf, force } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
-            claudebox_core::stop::destroy_instance(&manifest.project_id, force)?;
-            eprintln!("VM data for '{}' destroyed.", manifest.project_name);
+            commands::maintenance::handle_destroy_command(&rvf, force)?;
         }
         Commands::Setup { force } => {
-            claudebox_core::setup::run_setup(force)?;
+            commands::maintenance::handle_setup_command(force)?;
         }
     }
 
     Ok(())
-}
-
-/// Commit the `.rvf` file to git if the directory is inside a git repo.
-/// Prints a warning if no git repo is found — without git, file operations
-/// inside the VM are not recoverable.
-fn git_commit_rvf(rvf_path: &std::path::Path, dir: &std::path::Path) {
-    use std::process::Command;
-
-    // Check whether we're inside a git repo.
-    let in_repo = Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .current_dir(dir)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if !in_repo {
-        eprintln!(
-            "\nWarning: no git repository found in {}.\n\
-             Without git, file changes made by Claude inside the VM cannot be undone.\n\
-             Run `git init && git add . && git commit -m 'initial'` before starting.",
-            dir.display()
-        );
-        return;
-    }
-
-    // Stage the .rvf file.
-    let staged = Command::new("git")
-        .args(["add", &rvf_path.to_string_lossy()])
-        .current_dir(dir)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !staged {
-        eprintln!("Warning: could not stage {} in git.", rvf_path.display());
-        return;
-    }
-
-    // Commit — non-fatal if it fails (e.g. nothing changed, no identity configured).
-    let committed = Command::new("git")
-        .args([
-            "commit",
-            "-m",
-            &format!(
-                "chore: add claudebox environment ({})",
-                rvf_path.file_name().unwrap_or_default().to_string_lossy()
-            ),
-        ])
-        .current_dir(dir)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if committed {
-        eprintln!(
-            "Committed {} to git — file changes inside the VM are recoverable via git.",
-            rvf_path.file_name().unwrap_or_default().to_string_lossy()
-        );
-    }
 }
 
 #[cfg(test)]

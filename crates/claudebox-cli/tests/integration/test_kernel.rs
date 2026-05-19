@@ -1,5 +1,5 @@
 #[test]
-#[ignore = "requires rvf-cli, docker"]
+#[ignore = "requires rvf-cli and host VM/toolchain prerequisites"]
 fn test_upgrade_kernel_preserves_segments() {
     // claudebox init with session data in META_SEG
     // claudebox upgrade-kernel

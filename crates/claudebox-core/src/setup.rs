@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(target_os = "macos")]
 const DEV_IMAGE_VERSION: &str = "0.1.0";
 
 // Architecture-specific asset names and URLs.
@@ -14,7 +15,7 @@ const KERNEL_URL: &str =
 #[cfg(target_arch = "aarch64")]
 const INITRAMFS_URL: &str =
     "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/initramfs-aarch64";
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const DEV_IMAGE_URL: &str =
     "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/claudebox-dev-0.1.0-aarch64.qcow2";
 
@@ -26,7 +27,7 @@ const KERNEL_URL: &str =
 #[cfg(not(target_arch = "aarch64"))]
 const INITRAMFS_URL: &str =
     "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/initramfs-x86_64";
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
 const DEV_IMAGE_URL: &str =
     "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/claudebox-dev-0.1.0-x86_64.qcow2";
 
@@ -63,6 +64,11 @@ pub fn instance_overlay_path(project_id: &str) -> PathBuf {
 /// PID file path for a running VM instance.
 pub fn instance_pid_path(project_id: &str) -> PathBuf {
     data_dir().join("vms").join(project_id).join("qemu.pid")
+}
+
+/// Unix socket path used by the host-side vsock log bridge for a VM instance.
+pub fn instance_vsock_path(project_id: &str) -> PathBuf {
+    data_dir().join("vms").join(project_id).join("logs.sock")
 }
 
 /// Per-instance VM data directory (overlay, PID file, etc.).

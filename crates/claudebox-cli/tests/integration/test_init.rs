@@ -1,5 +1,5 @@
 #[test]
-#[ignore = "requires rvf-cli, clang, docker"]
+#[ignore = "requires rvf-cli and clang"]
 fn test_init_single_language() {
     let dir = tempfile::tempdir().unwrap();
     let result = std::process::Command::new("cargo")
@@ -16,7 +16,7 @@ fn test_init_single_language() {
 }
 
 #[test]
-#[ignore = "requires rvf-cli, clang, docker"]
+#[ignore = "requires rvf-cli and clang"]
 fn test_init_multi_language() {
     let dir = tempfile::tempdir().unwrap();
     let result = std::process::Command::new("cargo")
@@ -42,9 +42,9 @@ fn test_init_failure_leaves_no_artefacts() {
 }
 
 #[test]
-#[ignore = "requires rvf-cli, clang, docker"]
+#[ignore = "requires rvf-cli and clang"]
 fn test_init_kernel_from_existing_appliance() {
     // claudebox init newapp --lang node@22 --kernel-from existingapp.rvf
-    // Verify init succeeds without calling Docker
+    // Verify init succeeds without kernel build toolchain usage
     // Verify KERNEL_SEG in new appliance matches source
 }

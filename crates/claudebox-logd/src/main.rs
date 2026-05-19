@@ -24,11 +24,50 @@ pub enum LogEntryKind {
 
 /// Entry point for the in-VM log daemon.
 ///
-/// Full vsock implementation (connect to CID 2 port 9999, write inotify/PROMPT_COMMAND
-/// events as JSON-lines) requires Linux VM context — stubbed here so host-side
-/// tools can be built and tested without a running VM.
-fn main() {
-    println!("claudebox-logd starting");
+/// This implementation is intentionally minimal and portable: it reads
+/// newline-delimited records from stdin and forwards canonical JSON log lines
+/// to stdout. Guest-side integration (inotify + shell hooks + vsock bridge)
+/// wires into this process by feeding stdin.
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let stdin = tokio::io::stdin();
+    let mut lines = BufReader::new(stdin).lines();
+    let mut stdout = tokio::io::stdout();
+
+    while let Some(line) = lines.next_line().await? {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let entry = if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if v.get("ts").is_some() && v.get("type").is_some() && v.get("data").is_some() {
+                v
+            } else {
+                serde_json::json!({
+                    "ts": chrono::Utc::now().to_rfc3339(),
+                    "type": "STDOUT",
+                    "data": { "line": trimmed }
+                })
+            }
+        } else {
+            serde_json::json!({
+                "ts": chrono::Utc::now().to_rfc3339(),
+                "type": "STDOUT",
+                "data": { "line": trimmed }
+            })
+        };
+
+        stdout
+            .write_all(entry.to_string().as_bytes())
+            .await?;
+        stdout.write_all(b"\n").await?;
+        stdout.flush().await?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

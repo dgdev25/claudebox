@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use rvf_runtime::RvfStore;
 use rvf_types::KernelHeader;
 
-/// Utilities for seeding the local kernel cache without running a full
-/// Docker build — essential for air-gap / offline environments.
+/// Utilities for seeding the local kernel cache without requiring a local
+/// kernel build toolchain — essential for air-gap / offline environments.
 pub struct KernelImporter;
 
 impl KernelImporter {

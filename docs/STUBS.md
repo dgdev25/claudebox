@@ -65,7 +65,7 @@ Items in Tier 5 require external toolchains or in-VM Linux context.
 | 24 | `Commands::Logs` | `claudebox-cli/src/main.rs:287` | CLI wrapper for #23; blocked on log_reader (#23) and logd (#28) |
 | 25 | `BootHook::run()` + `ShutdownHook::run()` | `claudebox-meta/src/hooks.rs:10/25` | Read/write META_SEG containing session state; Claude Code hook integration |
 | 26 | `handle_search_codebase()` + `handle_get_session_context()` | `claudebox-vec/src/mcp_server.rs:65/102` | Embed query with fastembed, run HNSW top-k search, filter tombstoned; depends on #22 |
-| 27 | `KernelBuilder::build()` | `claudebox-rvf/src/kernel_builder.rs:16` | Invoke `kernels/build.sh` via Docker with language profiles to build custom bzImage |
+| 27 | `KernelBuilder::build()` | `claudebox-rvf/src/kernel_builder.rs:16` | Cache/prebuilt-only kernel resolution (no Docker default path) |
 | 28 | `ApplianceBuilder::embed_ebpf()` | `claudebox-rvf/src/builder.rs:81` | Compile eBPF C with `clang -target bpf`, embed via `store.embed_ebpf()`; `claudebox-ebpf::EbpfCompiler` exists on Linux |
 | 29 | `claudebox-logd main()` | `claudebox-logd/src/main.rs:30` | Full in-VM daemon: vsock connect to host, inotify on `/workspace`, PROMPT_COMMAND hook, JSON-line forwarding; Linux-only, runs inside VM |
 
@@ -104,7 +104,7 @@ Items in Tier 5 require external toolchains or in-VM Linux context.
 #23 VsockLogReader
   └─ #24 Commands::Logs ──── also blocked on #29
 #25 BootHook/ShutdownHook
-#27 KernelBuilder (Docker)
+#27 KernelBuilder (cache/prebuilt)
 #28 embed_ebpf (clang)
 #29 claudebox-logd (in-VM)
   └─ #24 Commands::Logs
@@ -139,9 +139,9 @@ Items in Tier 5 require external toolchains or in-VM Linux context.
 | 21 | VecCompactor | ✅ done |
 | 22 | WorkspaceIndexer (fastembed) | ✅ done (chunking + sidecar; embed feature gated) |
 | 23 | VsockLogReader | ✅ done |
-| 24 | Commands::Logs | ⬜ pending |
+| 24 | Commands::Logs | ✅ done |
 | 25 | BootHook / ShutdownHook | ✅ done |
 | 26 | MCP search_codebase + session_context | ✅ done (substring search; cosine when embed feature on) |
-| 27 | KernelBuilder (Docker) | ⬜ pending |
-| 28 | embed_ebpf (clang) | ⬜ pending |
-| 29 | claudebox-logd in-VM daemon | ⬜ pending |
+| 27 | KernelBuilder (cache/prebuilt) | ✅ done |
+| 28 | embed_ebpf (clang) | ✅ done (Linux/toolchain-aware; warn+skip fallback) |
+| 29 | claudebox-logd in-VM daemon | ✅ done (portable stdin→JSONL forwarder baseline) |

@@ -21,10 +21,12 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
 chrono = { workspace = true }
+rvf-runtime = { workspace = true }
 
 [[test]]
 name = "test_init"
@@ -53,3 +55,7 @@ path = "tests/integration/test_snapshot.rs"
 [[test]]
 name = "test_e2e_sidecars"
 path = "tests/integration/test_e2e_sidecars.rs"
+
+[[test]]
+name = "test_rvf_fixtures"
+path = "tests/integration/test_rvf_fixtures.rs"

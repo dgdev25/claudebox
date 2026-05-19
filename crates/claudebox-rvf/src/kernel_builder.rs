@@ -12,16 +12,17 @@ impl KernelBuilder {
     /// Returns the cached bzImage path if present; otherwise invokes
     /// `kernels/build.sh` to produce one.
     ///
-    /// NOTE: The subprocess call is deferred to Phase 5 integration.
+    /// Docker is intentionally not used in the default ClaudeBox flow.
+    /// Kernel provisioning must come from cache/prebuilt artifacts.
     pub async fn build(&self) -> anyhow::Result<PathBuf> {
         if let Some(cached) = self.cached_path() {
             return Ok(cached);
         }
-        // TODO(Phase-5): invoke kernels/build.sh with all lang profiles and
-        // store the result at cache_dir()/bzImage.
         anyhow::bail!(
-            "kernels/build.sh invocation not yet implemented — \
-             requires Docker and kernel-builder toolchain (deferred to Phase 5)"
+            "no cached kernel found at {}. \
+             Docker-based kernel builds are disabled; provide a prebuilt kernel via \
+             --kernel-from <path> or run `claudebox setup` to populate cache",
+            self.cache_dir().join("bzImage").display()
         )
     }
 

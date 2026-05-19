@@ -205,6 +205,7 @@ dependencies = [
  "claudebox-rvf",
  "claudebox-vec",
  "claudebox-witness",
+ "rvf-runtime",
  "serde_json",
  "tempfile",
  "tokio",
@@ -263,6 +264,7 @@ name = "claudebox-logd"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "serde",
  "serde_json",
  "tokio",
@@ -306,6 +308,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "claudebox-core",
+ "claudebox-ebpf",
  "claudebox-witness",
  "dirs",
  "ed25519-dalek",
@@ -1334,6 +1337,7 @@ name = "rvf-crypto"
 version = "0.2.0"
 dependencies = [
  "ed25519-dalek",
+ "rand",
  "rvf-types",
  "sha3",
 ]
@@ -1342,12 +1346,19 @@ dependencies = [
 name = "rvf-runtime"
 version = "0.2.0"
 dependencies = [
+ "rand",
  "rvf-types",
+ "tempfile",
 ]
 
 [[package]]
 name = "rvf-types"
 version = "0.2.0"
+dependencies = [
+ "ed25519-dalek",
+ "rand_core",
+ "serde",
+]
 
 [[package]]
 name = "scopeguard"
