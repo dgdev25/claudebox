@@ -2,3 +2,11 @@
 name = "claudebox-meta"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+claudebox-witness = { path = "../claudebox-witness" }
