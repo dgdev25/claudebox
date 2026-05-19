@@ -279,8 +279,8 @@ mod tests {
         let after = read_chunks(&sidecar).unwrap();
         let by_path: std::collections::HashMap<_, _> =
             after.iter().map(|c| (c.file_path.as_str(), c.tombstoned)).collect();
-        assert_eq!(by_path["a.rs"], false);
-        assert_eq!(by_path["gone.rs"], true);
+        assert!(!by_path["a.rs"]);
+        assert!(by_path["gone.rs"]);
     }
 
     #[test]

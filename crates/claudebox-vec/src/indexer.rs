@@ -161,7 +161,7 @@ impl WorkspaceIndexer {
         let mut files_indexed = 0usize;
         for path in walk_workspace(&self.workspace_path) {
             let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-            if mtime.map_or(true, |t| t <= since) {
+            if mtime.is_none_or(|t| t <= since) {
                 continue;
             }
             let chunks = self.index_file(&path).await?;

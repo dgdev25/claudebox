@@ -24,6 +24,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+chrono = { workspace = true }
 
 [[test]]
 name = "test_init"
@@ -48,3 +49,7 @@ path = "tests/integration/test_kernel.rs"
 [[test]]
 name = "test_snapshot"
 path = "tests/integration/test_snapshot.rs"
+
+[[test]]
+name = "test_e2e_sidecars"
+path = "tests/integration/test_e2e_sidecars.rs"
