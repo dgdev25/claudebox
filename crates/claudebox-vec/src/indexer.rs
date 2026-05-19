@@ -87,7 +87,7 @@ pub fn chunk_text(text: &str, chunk_tokens: usize, overlap_tokens: usize) -> Vec
 }
 
 /// A single embedded chunk of a source file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChunkRecord {
     pub file_path: String,
     pub chunk_index: usize,
