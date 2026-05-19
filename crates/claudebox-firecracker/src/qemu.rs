@@ -56,31 +56,40 @@ pub fn find_qemu(arch_str: &str) -> anyhow::Result<PathBuf> {
 
 /// Build a QEMU invocation for a ClaudeBox microVM.
 ///
-/// Uses `-machine microvm,accel=tcg` for portability (works on macOS
-/// without KVM). On Linux with KVM available, `accel=kvm` is preferred.
+/// Two boot modes:
+/// - **Kernel + initramfs**: supply `kernel_path` + `initramfs_path` (Linux, or
+///   macOS with a pre-built Linux initramfs placed by `claudebox setup`)
+/// - **Disk image** (macOS primary path): supply `rootfs_path` to a `.qcow2`
+///   or `.img`; the machine boots via BIOS from the disk, no kernel arg needed
 ///
 /// # Arguments
-/// - `kernel_path` — path to the extracted bzImage
-/// - `initramfs_path` — optional path to the initramfs cpio.gz
-/// - `ssh_port` — host-side SSH port forwarded to guest :22
+/// - `kernel_path` — extracted bzImage (ignored in disk-image mode)
+/// - `initramfs_path` — cpio.gz initramfs; `None` switches to disk-image mode
+/// - `ssh_port` — host-side port forwarded to guest :22
 /// - `memory_mb` — guest RAM in MiB
-/// - `workspace_path` — not used in the command itself yet; reserved for
-///   virtiofs integration in a later phase
+/// - `rootfs_path` — optional disk image (`.qcow2` / `.img`) for macOS path
 pub fn build_qemu_command(
     kernel_path: &Path,
     initramfs_path: Option<&Path>,
     ssh_port: u16,
     memory_mb: u32,
-    _workspace_path: &Path,
+    rootfs_path: Option<&Path>,
 ) -> anyhow::Result<Command> {
     let qemu_bin = find_qemu("x86_64")?;
     let mut cmd = Command::new(&qemu_bin);
 
-    // Machine type: prefer HVF on macOS, KVM on Linux, TCG as fallback.
+    let disk_image_mode = initramfs_path.is_none() && rootfs_path.is_some();
+
+    // Machine type
     #[cfg(target_os = "macos")]
     {
-        // Apple Silicon or Intel Mac — try hvf, fall back to tcg
-        cmd.args(["-machine", "microvm,accel=hvf:tcg"]);
+        // macOS: prefer HVF (hardware), fall back to TCG (software)
+        // microvm machine type requires KVM; use q35 for macOS compatibility
+        if disk_image_mode {
+            cmd.args(["-machine", "q35,accel=hvf:tcg"]);
+        } else {
+            cmd.args(["-machine", "microvm,accel=hvf:tcg"]);
+        }
         cmd.args(["-cpu", "host"]);
     }
     #[cfg(not(target_os = "macos"))]
@@ -97,24 +106,33 @@ pub fn build_qemu_command(
     // Memory
     cmd.arg("-m").arg(format!("{memory_mb}M"));
 
-    // Kernel image
-    cmd.arg("-kernel").arg(kernel_path);
-
-    // Initramfs (if provided)
-    if let Some(initrd) = initramfs_path {
-        cmd.arg("-initrd").arg(initrd);
+    if disk_image_mode {
+        // Disk image boot (macOS path) — BIOS boots from the image, no -kernel needed
+        let disk = rootfs_path.unwrap();
+        let fmt = if disk.extension().is_some_and(|e| e == "qcow2") {
+            "qcow2"
+        } else {
+            "raw"
+        };
+        cmd.arg("-drive").arg(format!(
+            "file={},format={fmt},if=virtio",
+            disk.display()
+        ));
+    } else {
+        // Kernel + initramfs boot (Linux native or pre-built initramfs)
+        cmd.arg("-kernel").arg(kernel_path);
+        if let Some(initrd) = initramfs_path {
+            cmd.arg("-initrd").arg(initrd);
+        }
+        cmd.arg("-append").arg("console=ttyS0 panic=-1");
     }
 
-    // Kernel command line
-    cmd.arg("-append").arg("console=ttyS0 panic=-1");
-
-    // Network: forward SSH port
-    cmd.arg("-netdev").arg(format!(
-        "user,id=net0,hostfwd=tcp::{ssh_port}-:22"
-    ));
+    // Network: forward SSH port from host to guest :22
+    cmd.arg("-netdev")
+        .arg(format!("user,id=net0,hostfwd=tcp::{ssh_port}-:22"));
     cmd.args(["-device", "virtio-net-pci,netdev=net0"]);
 
-    // No graphics, no reboot on panic
+    // No display, no reboot on panic
     cmd.arg("-nographic");
     cmd.arg("-no-reboot");
 

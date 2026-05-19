@@ -1,12 +1,16 @@
 use anyhow::Result;
 
 pub fn check_dependencies() -> Result<()> {
-    check_single_dep("qemu-system-x86_64", "7.0.0")?;
-    check_single_dep("firecracker", "1.7.0")?;
-    check_single_dep("virtiofsd", "0.1.0")?;
-    check_single_dep("clang", "15.0.0")?;
-    check_single_dep("rvf", "0.1.0")?;
-    check_single_dep("ssh", "0.0.0")?;
+    // QEMU is the only hard requirement for the start command.
+    // Firecracker/virtiofsd are the future Linux-native path; not required yet.
+    check_single_dep("qemu-system-x86_64", "7.0.0")
+        .map_err(|_| anyhow::anyhow!(
+            "qemu-system-x86_64 not found.\n  macOS: brew install qemu\n  Ubuntu: apt install qemu-system-x86"
+        ))?;
+    check_single_dep("ssh", "0.0.0")
+        .map_err(|_| anyhow::anyhow!(
+            "ssh not found. Install OpenSSH: apt install openssh-client  (or equivalent)"
+        ))?;
     // On Linux only: check /dev/kvm
     #[cfg(target_os = "linux")]
     check_kvm()?;

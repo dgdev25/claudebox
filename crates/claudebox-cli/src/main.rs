@@ -23,6 +23,11 @@ pub enum Commands {
         rvf: PathBuf,
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
+        /// Optional disk image (.qcow2 or .img) to boot instead of building
+        /// an initramfs — required on macOS.
+        /// Download: curl -fLO https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-virt-3.21.0-x86_64.iso
+        #[arg(long)]
+        rootfs: Option<PathBuf>,
     },
     Stop {
         rvf: PathBuf,
@@ -155,7 +160,7 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
         }
-        Commands::Start { rvf, workspace } => {
+        Commands::Start { rvf, workspace, rootfs } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
             let opts = claudebox_core::start::StartOptions {
                 rvf: rvf.clone(),
@@ -163,10 +168,17 @@ async fn main() -> anyhow::Result<()> {
             };
             let extracted = claudebox_core::start::extract_kernel(&opts)?;
 
-            // Build initramfs
+            // Try to build initramfs; on macOS this will fail — caller uses --rootfs instead
             let tmp_dir = extracted.kernel_path.parent().unwrap().to_path_buf();
-            let initramfs_path =
-                claudebox_firecracker::initramfs::build_initramfs(&tmp_dir).ok();
+            let initramfs_path = claudebox_firecracker::initramfs::build_initramfs(&tmp_dir).ok();
+
+            if initramfs_path.is_none() && rootfs.is_none() {
+                anyhow::bail!(
+                    "No initramfs could be built and no --rootfs supplied.\n\
+                     macOS: claudebox start <rvf> --rootfs <alpine.qcow2>\n\
+                     Download Alpine: curl -fLO https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-virt-3.21.0-x86_64.iso"
+                );
+            }
 
             // Build and spawn QEMU
             let mut qemu_cmd = claudebox_firecracker::qemu::build_qemu_command(
@@ -174,7 +186,7 @@ async fn main() -> anyhow::Result<()> {
                 initramfs_path.as_deref(),
                 extracted.ssh_port,
                 512,
-                &workspace,
+                rootfs.as_deref(),
             )?;
 
             eprintln!(
