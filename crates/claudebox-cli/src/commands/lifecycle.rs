@@ -201,6 +201,7 @@ pub fn handle_kernel_command(
 }
 
 fn git_commit_rvf(rvf_path: &Path, dir: &Path) {
+    use std::io::{self, Write};
     use std::process::Command;
 
     let in_repo = Command::new("git")
@@ -211,12 +212,50 @@ fn git_commit_rvf(rvf_path: &Path, dir: &Path) {
         .unwrap_or(false);
 
     if !in_repo {
-        eprintln!(
-            "\nWarning: no git repository found in {}.\n\
-             Without git, file changes made by Claude inside the VM cannot be undone.\n\
-             Run `git init && git add . && git commit -m 'initial'` before starting.",
-            dir.display()
-        );
+        eprintln!("\nWarning: no git repository found in {}.", dir.display());
+        eprintln!("Without git, file changes made by Claude inside the VM cannot be undone.");
+
+        print!("Do you want me to initialize Git? (y/n): ");
+        let _ = io::stdout().flush();
+
+        let mut answer = String::new();
+        let should_init = io::stdin()
+            .read_line(&mut answer)
+            .map(|_| matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
+            .unwrap_or(false);
+
+        if should_init {
+            let init_ok = Command::new("git")
+                .args(["init"])
+                .current_dir(dir)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !init_ok {
+                eprintln!("Warning: failed to run `git init`.");
+                return;
+            }
+
+            let _ = Command::new("git")
+                .args(["add", "."])
+                .current_dir(dir)
+                .status();
+
+            let committed = Command::new("git")
+                .args(["commit", "-m", "initial"])
+                .current_dir(dir)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+
+            if committed {
+                eprintln!("Initialized git repository and created initial commit.");
+            } else {
+                eprintln!("Initialized git repository. Initial commit was not created.");
+            }
+        } else {
+            eprintln!("Skipping git initialization.");
+        }
         return;
     }
 
