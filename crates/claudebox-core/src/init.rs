@@ -53,7 +53,12 @@ pub fn build_manifest_from_opts(opts: &InitOptions) -> anyhow::Result<ClaudeBoxM
         .collect::<anyhow::Result<_>>()?;
 
     let language = if profiles.len() == 1 {
-        LanguageProfile::Single(profiles.into_iter().next().unwrap())
+        LanguageProfile::Single(
+            profiles
+                .into_iter()
+                .next()
+                .expect("profiles.len() == 1 checked on the line above"),
+        )
     } else {
         LanguageProfile::Multi(profiles)
     };

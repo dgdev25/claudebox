@@ -19,9 +19,20 @@ pub struct RvfInspectResult {
     pub segments: Vec<String>,
 }
 
+fn require_absolute(path: &Path) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        path.is_absolute(),
+        "rvf-cli path argument must be absolute to prevent traversal: {:?}",
+        path
+    );
+    Ok(())
+}
+
 impl ClaudeboxRvfCli {
     /// Derive a new appliance from a source path to an output path.
     pub async fn derive(&self, source: &Path, output: &Path) -> anyhow::Result<()> {
+        require_absolute(source)?;
+        require_absolute(output)?;
         let status = Command::new(&self.binary)
             .arg("derive")
             .arg(source)
@@ -35,6 +46,7 @@ impl ClaudeboxRvfCli {
 
     /// Verify the witness chain of an RVF file.
     pub async fn verify_witness(&self, rvf: &Path) -> anyhow::Result<WitnessVerifyResult> {
+        require_absolute(rvf)?;
         let output = Command::new(&self.binary)
             .arg("verify-witness")
             .arg(rvf)
@@ -50,6 +62,7 @@ impl ClaudeboxRvfCli {
 
     /// Inspect the segments of an RVF file.
     pub async fn inspect(&self, rvf: &Path) -> anyhow::Result<RvfInspectResult> {
+        require_absolute(rvf)?;
         let output = Command::new(&self.binary)
             .arg("inspect")
             .arg(rvf)
@@ -73,6 +86,7 @@ impl ClaudeboxRvfCli {
 
     /// Compact an RVF file in-place.
     pub async fn compact(&self, rvf: &Path) -> anyhow::Result<()> {
+        require_absolute(rvf)?;
         let status = Command::new(&self.binary)
             .arg("compact")
             .arg(rvf)
