@@ -1,4 +1,5 @@
 pub mod compaction;
+pub mod writer;
 
 use serde::{Deserialize, Serialize};
 

@@ -11,3 +11,4 @@ ed25519-dalek = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
+rand = { workspace = true }
