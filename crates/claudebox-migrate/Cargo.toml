@@ -2,3 +2,9 @@
 name = "claudebox-migrate"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rvf-runtime = { workspace = true }
