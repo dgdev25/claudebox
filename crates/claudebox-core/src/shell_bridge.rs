@@ -37,8 +37,8 @@ impl ShellBridge {
             exec ssh \\\n  \
             -i \"${CLAUDEBOX_KEY_PATH}\" \\\n  \
             -p \"${CLAUDEBOX_SSH_PORT}\" \\\n  \
-            -o StrictHostKeyChecking=no \\\n  \
-            -o UserKnownHostsFile=/dev/null \\\n  \
+            -o StrictHostKeyChecking=accept-new \\\n  \
+            -o UserKnownHostsFile=\"${HOME}/.claudebox/known_hosts\" \\\n  \
             -o ConnectTimeout=5 \\\n  \
             claude@127.0.0.1 \"$@\"\n";
 
@@ -118,7 +118,7 @@ impl ShellBridge {
 
         let key_path_str = self.key_path.to_string_lossy();
         let ssh_port_str = self.ssh_port.to_string();
-        let forward_spec = format!("{}:localhost:{}", actual_mcp_port, actual_mcp_port);
+        let forward_spec = format!("127.0.0.1:{}:localhost:{}", actual_mcp_port, actual_mcp_port);
 
         let config = serde_json::json!({
             "mcpServers": {
@@ -128,7 +128,8 @@ impl ShellBridge {
                         "-i", key_path_str,
                         "-p", ssh_port_str,
                         "-L", forward_spec,
-                        "-o", "StrictHostKeyChecking=no",
+                        "-o", "StrictHostKeyChecking=accept-new",
+                        "-o", "UserKnownHostsFile=~/.claudebox/known_hosts",
                         "claude@127.0.0.1",
                         "claudebox-mcp"
                     ],

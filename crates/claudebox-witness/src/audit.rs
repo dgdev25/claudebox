@@ -96,7 +96,10 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 /// Format witness entries as JSON for machine-readable audit output.
-pub fn format_audit_json(entries: &[WitnessEntry]) -> String {
+///
+/// Returns an error if serialization fails, so callers can detect and surface
+/// data loss rather than silently receiving empty JSON.
+pub fn format_audit_json(entries: &[WitnessEntry]) -> anyhow::Result<String> {
     let valid = verify_chain(entries);
     let payload = serde_json::json!({
         "chain_valid": valid.is_valid,
@@ -109,7 +112,8 @@ pub fn format_audit_json(entries: &[WitnessEntry]) -> String {
             "prev_hash": to_hex(&e.prev_hash),
         })).collect::<Vec<_>>(),
     });
-    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&payload)
+        .map_err(|e| anyhow::anyhow!("failed to serialize audit JSON: {e}"))
 }
 
 fn event_type_label(event: &WitnessEvent) -> &'static str {

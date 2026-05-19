@@ -27,18 +27,26 @@ impl ShutdownHook {
     }
 
     pub fn collect_history(&self) -> anyhow::Result<Vec<HistoryEntry>> {
-        // Read shell_history_path, parse each line as a Command HistoryEntry
-        let content = std::fs::read_to_string(&self.shell_history_path)
-            .map_err(|e| anyhow::anyhow!("failed to read shell history: {e}"))?;
+        use std::io::{BufRead, BufReader};
+
+        const MAX_HISTORY_LINES: usize = 10_000;
+
+        // Use a buffered reader with a line cap to prevent OOM on gigabyte history
+        // files (CWE-400). Only the last MAX_HISTORY_LINES lines are retained.
+        let file = std::fs::File::open(&self.shell_history_path)
+            .map_err(|e| anyhow::anyhow!("failed to open shell history: {e}"))?;
+        let reader = BufReader::new(file);
 
         let ts = chrono::Utc::now().to_rfc3339();
-        let entries: Vec<HistoryEntry> = content
+        let entries: Vec<HistoryEntry> = reader
             .lines()
+            .filter_map(|r| r.ok())
             .filter(|l| !l.trim().is_empty())
+            .take(MAX_HISTORY_LINES)
             .map(|line| HistoryEntry {
                 ts: ts.clone(),
                 kind: HistoryEntryKind::Command,
-                value: line.to_string(),
+                value: line,
             })
             .collect();
 

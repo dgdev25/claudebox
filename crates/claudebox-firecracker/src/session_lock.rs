@@ -71,13 +71,20 @@ impl SessionLock {
         let json = serde_json::to_string(contents)
             .map_err(|e| anyhow::anyhow!("failed to serialise lock contents: {e}"))?;
 
-        // Known limitation: there is a TOCTOU window between the stale-lock
-        // removal above and this write. Two simultaneous `claudebox start`
-        // invocations could both pass the liveness check and race here.
-        // For a local single-user CLI tool the risk is negligible; a proper
-        // fix would use O_CREAT|O_EXCL via OpenOptions::create_new(true).
-        std::fs::write(&lock_path, &json)
-            .map_err(|e| anyhow::anyhow!("failed to write lock file: {e}"))?;
+        // Use O_CREAT|O_EXCL (create_new) to atomically create the lock file,
+        // eliminating the TOCTOU window between stale-lock removal and write
+        // (CWE-367). Two concurrent `claudebox start` invocations cannot both
+        // succeed: one will get EEXIST and fail.
+        {
+            use std::io::Write;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+                .map_err(|e| anyhow::anyhow!("failed to create lock file (concurrent start?): {e}"))?
+                .write_all(json.as_bytes())
+                .map_err(|e| anyhow::anyhow!("failed to write lock file: {e}"))?;
+        }
 
         #[cfg(unix)]
         {

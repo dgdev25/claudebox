@@ -1,14 +1,47 @@
 use crate::manifest::NetworkPolicy;
 use std::path::Path;
 
+/// Validate that `domain` is a well-formed RFC 1123 hostname.
+///
+/// Rejects empty strings, labels with non-`[a-zA-Z0-9-]` characters, labels
+/// starting/ending with `-`, and any string containing whitespace or control
+/// characters (which would allow Squid config injection via newlines).
+pub fn validate_domain(domain: &str) -> anyhow::Result<()> {
+    if domain.is_empty() {
+        anyhow::bail!("domain name cannot be empty");
+    }
+    for label in domain.split('.') {
+        if label.is_empty() {
+            anyhow::bail!("invalid domain {:?}: empty label (leading/trailing dot or '..')", domain);
+        }
+        if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            anyhow::bail!(
+                "invalid domain {:?}: labels must contain only [a-zA-Z0-9-]",
+                domain
+            );
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            anyhow::bail!(
+                "invalid domain {:?}: labels cannot start or end with '-'",
+                domain
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Add a domain to a `NetworkPolicy`, deduplicating and sorting.
-pub fn add_domain_to_policy(policy: &mut NetworkPolicy, domain: &str) {
+///
+/// Returns an error if `domain` fails RFC 1123 hostname validation.
+pub fn add_domain_to_policy(policy: &mut NetworkPolicy, domain: &str) -> anyhow::Result<()> {
+    validate_domain(domain)?;
     let domain = domain.trim().to_string();
     if !domain.is_empty() && !policy.allow_domains.contains(&domain) {
         policy.allow_domains.push(domain);
         policy.allow_domains.sort();
         policy.allow_domains.dedup();
     }
+    Ok(())
 }
 
 /// Remove a domain from a `NetworkPolicy`.
@@ -42,8 +75,18 @@ mod tests {
             allow_localhost: true,
             dns_server: "1.1.1.1".into(),
         };
-        add_domain_to_policy(&mut policy, "example.com");
+        add_domain_to_policy(&mut policy, "example.com").unwrap();
         assert!(policy.allow_domains.contains(&"example.com".to_string()));
+    }
+
+    #[test]
+    fn test_validate_domain_rejects_injection() {
+        assert!(validate_domain("evil.com\nhttp_access allow all").is_err());
+        assert!(validate_domain("").is_err());
+        assert!(validate_domain(".leading-dot.com").is_err());
+        assert!(validate_domain("-leading-hyphen.com").is_err());
+        assert!(validate_domain("valid-domain.example.com").is_ok());
+        assert!(validate_domain("registry.npmjs.org").is_ok());
     }
 
     #[test]

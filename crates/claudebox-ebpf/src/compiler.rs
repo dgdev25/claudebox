@@ -78,16 +78,35 @@ impl EbpfCompiler {
         {
             use std::process::Command;
 
-            let out_path = PathBuf::from("/tmp/claudebox_filter.o");
+            // Use a unique temp path (PID + timestamp) to prevent symlink attacks
+            // on the shared /tmp directory (CWE-377).
+            let pid = std::process::id();
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos();
+            let out_path = PathBuf::from(format!("/tmp/claudebox_filter_{pid}_{nanos}.o"));
             let out_str = out_path
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("output path is not valid UTF-8"))?;
 
-            // filter.c path is relative to workspace root; callers must set CWD
-            // to the workspace root before invoking compile() (enforced by run_init).
-            let filter_src = std::env::var("CLAUDEBOX_WORKSPACE_ROOT")
-                .map(|root| format!("{root}/ebpf/network_filter/filter.c"))
-                .unwrap_or_else(|_| "ebpf/network_filter/filter.c".to_string());
+            // CLAUDEBOX_WORKSPACE_ROOT must be an absolute path to prevent directory
+            // traversal (CWE-73). Relative paths are rejected.
+            let filter_src = match std::env::var("CLAUDEBOX_WORKSPACE_ROOT") {
+                Ok(root) => {
+                    let root_path = std::path::PathBuf::from(&root);
+                    anyhow::ensure!(
+                        root_path.is_absolute(),
+                        "CLAUDEBOX_WORKSPACE_ROOT must be an absolute path, got {:?}",
+                        root
+                    );
+                    root_path
+                        .join("ebpf/network_filter/filter.c")
+                        .to_string_lossy()
+                        .to_string()
+                }
+                Err(_) => "ebpf/network_filter/filter.c".to_string(),
+            };
 
             let clang_out = Command::new("clang")
                 .args([
@@ -147,6 +166,42 @@ impl EbpfCompiler {
 }
 
 // ---------------------------------------------------------------------------
+// Domain validation
+// ---------------------------------------------------------------------------
+
+/// Validate that `domain` is a safe RFC 1123 hostname for use in Squid config.
+///
+/// Rejects any string containing characters outside `[a-zA-Z0-9.-]`, empty
+/// labels, labels starting/ending with `-`, and any whitespace or control
+/// characters (which would allow Squid directive injection via newlines).
+fn validate_squid_domain(domain: &str) -> anyhow::Result<()> {
+    if domain.is_empty() {
+        anyhow::bail!("domain name cannot be empty");
+    }
+    for label in domain.split('.') {
+        if label.is_empty() {
+            anyhow::bail!(
+                "invalid domain {:?}: empty label (leading/trailing dot or '..')",
+                domain
+            );
+        }
+        if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            anyhow::bail!(
+                "invalid domain {:?}: labels must contain only [a-zA-Z0-9-]",
+                domain
+            );
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            anyhow::bail!(
+                "invalid domain {:?}: labels cannot start or end with '-'",
+                domain
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // SquidConfigGenerator
 // ---------------------------------------------------------------------------
 
@@ -174,6 +229,12 @@ impl SquidConfigGenerator {
             .parse::<std::net::IpAddr>()
             .map_err(|_| anyhow::anyhow!("dns_server must be a valid IP address, got {:?}", self.dns_server))?;
 
+        // Validate all domains before writing anything — reject newlines and
+        // non-hostname characters that could inject Squid ACL directives (OWASP A03).
+        for domain in &self.allow_domains {
+            validate_squid_domain(domain)?;
+        }
+
         let mut conf = String::new();
 
         conf.push_str("# ClaudeBox squid.conf — auto-generated macOS fallback\n");
@@ -183,8 +244,7 @@ impl SquidConfigGenerator {
 
         // Define one ACL per domain
         for domain in &self.allow_domains {
-            // Sanitise: strip leading dots/whitespace so `.npmjs.org` and
-            // `npmjs.org` both produce a valid squid ACL name.
+            // safe_name: replace dots and hyphens with underscores for Squid ACL name.
             let safe_name = domain
                 .trim_start_matches('.')
                 .replace(['.', '-'], "_");
