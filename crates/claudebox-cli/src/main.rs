@@ -88,6 +88,12 @@ pub enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Install system dependencies and download default kernel + rootfs.
+    Setup {
+        /// Re-download/reinstall even if already present.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -130,6 +136,12 @@ async fn main() -> anyhow::Result<()> {
             allow,
             kernel_from,
         } => {
+            // Auto-detect kernel from setup data dir when flag not supplied.
+            let kernel_from = kernel_from.or_else(|| {
+                let default = claudebox_core::setup::default_kernel_path();
+                if default.exists() { Some(default) } else { None }
+            });
+
             let output_dir = std::env::current_dir()?;
             let manifest = claudebox_core::init::run_init(
                 claudebox_core::init::InitOptions {
@@ -161,6 +173,16 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Start { rvf, workspace, rootfs } => {
+            // Auto-detect rootfs from setup data dir on macOS when flag not supplied.
+            let rootfs = rootfs.or_else(|| {
+                #[cfg(target_os = "macos")]
+                {
+                    let default = claudebox_core::setup::default_rootfs_path();
+                    if default.exists() { return Some(default); }
+                }
+                None
+            });
+
             claudebox_migrate::check_and_migrate(&rvf, true)?;
             let opts = claudebox_core::start::StartOptions {
                 rvf: rvf.clone(),
@@ -256,6 +278,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Destroy { rvf, .. } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("destroy command not yet fully implemented")
+        }
+        Commands::Setup { force } => {
+            claudebox_core::setup::run_setup(force)?;
         }
     }
 
