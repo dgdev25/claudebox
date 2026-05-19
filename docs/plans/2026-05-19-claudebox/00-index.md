@@ -8,23 +8,23 @@
 **Why:** Replaces blanket network kills and ephemeral sandboxing with principled isolation: eBPF allowlist, session persistence, COW branching, and a tamper-evident audit trail — all in one file, 125ms boot, zero external dependencies.
 
 **Success criteria:**
-- [ ] `cargo build --workspace --release` succeeds with zero errors
-- [ ] `cargo test --workspace` passes (all non-ignored tests)
-- [ ] `cargo clippy --workspace` produces zero warnings
-- [ ] `claudebox init myapp --lang node@22` produces a valid `.rvf` with all 7 required segments
-- [ ] `claudebox init polyglot --lang node@22,rust@1.87` produces Multi language profile with union network policy
-- [ ] `claudebox init newapp --kernel-from existing.rvf` succeeds without invoking Docker
-- [ ] Init failure (any phase) leaves zero artefacts on disk (InitTransaction)
-- [ ] `claudebox start myapp.rvf` boots VM, writes `.claude/settings.json`, writes session lock
-- [ ] `claudebox logs myapp.rvf --follow` streams real-time events from running VM
-- [ ] `claudebox status myapp.rvf` shows kernel age warning and tombstone warning when applicable
-- [ ] Double-start on same project errors with "already running" message
-- [ ] Stale session lock from crashed VM cleared automatically on next start
-- [ ] `claudebox audit myapp.rvf` displays audit trail with chain integrity verified
-- [ ] `claudebox compact myapp.rvf` removes tombstoned VEC entries and archives excess WITNESS entries
-- [ ] `claudebox upgrade-kernel myapp.rvf` rebuilds KERNEL_SEG with META/VEC intact
-- [ ] `claudebox migrate myapp.rvf` applies schema migrations with WITNESS event recorded
-- [ ] `claudebox snapshot export myapp.rvf pre-refactor --output ./snap.rvf` produces self-contained bootable `.rvf`
+- [x] `cargo build --workspace --release` succeeds with zero errors
+- [x] `cargo test --workspace` passes (all non-ignored tests)
+- [x] `cargo clippy --workspace` produces zero warnings
+- [x] `claudebox init myapp --lang node@22` produces a valid `.rvf` with all 7 required segments
+- [x] `claudebox init polyglot --lang node@22,rust@1.87` produces Multi language profile with union network policy
+- [x] `claudebox init newapp --kernel-from existing.rvf` succeeds without invoking Docker
+- [x] Init failure (any phase) leaves zero artefacts on disk (InitTransaction)
+- [x] `claudebox start myapp.rvf` boots VM, writes `.claude/settings.json`, writes session lock
+- [x] `claudebox logs myapp.rvf --follow` streams real-time events from running VM
+- [x] `claudebox status myapp.rvf` shows kernel age warning and tombstone warning when applicable
+- [x] Double-start on same project errors with "already running" message
+- [x] Stale session lock from crashed VM cleared automatically on next start
+- [x] `claudebox audit myapp.rvf` displays audit trail with chain integrity verified
+- [x] `claudebox compact myapp.rvf` removes tombstoned VEC entries and archives excess WITNESS entries
+- [x] `claudebox upgrade-kernel myapp.rvf` rebuilds KERNEL_SEG with META/VEC intact
+- [x] `claudebox migrate myapp.rvf` applies schema migrations with WITNESS event recorded
+- [x] `claudebox snapshot export myapp.rvf pre-refactor --output ./snap.rvf` produces self-contained bootable `.rvf`
 
 **Out of scope:**
 - Windows host support (v1: Linux + macOS only)
@@ -40,20 +40,20 @@
 
 | File | Phase | Tasks | Status |
 |------|-------|-------|--------|
-| 01-pseudocode.md | P — Pseudocode | — | [ ] |
-| 02-architecture.md | A — Architecture | — | [ ] |
-| 03-phase-0.md | R — SSH Shell Bridge | 4 | [ ] |
-| 04-phase-1.md | R — Foundation: Core Types + Manifest | 5 | [ ] |
-| 05-phase-2.md | R — RVF Builder + Init Atomicity + Witness Compaction | 7 | [ ] |
-| 06-phase-3.md | R — eBPF Network Filter | 4 | [ ] |
-| 07-phase-4.md | R — Kernel Builder + Upgrade + Air-Gap | 5 | [ ] |
-| 08-phase-5.md | R — Firecracker Lifecycle + Session Lock + vsock Logs | 6 | [ ] |
-| 09-phase-6.md | R — VEC_SEG Indexing + Stale Reconciliation | 5 | [ ] |
-| 10-phase-7.md | R — MCP Server | 4 | [ ] |
-| 11-phase-8.md | R — CLI Subcommands | 5 | [ ] |
-| 12-phase-9.md | R — Session Persistence Hooks | 3 | [ ] |
-| 13-phase-10.md | R — Integration Tests | 3 | [ ] |
-| 14-phase-11.md | R — Format Version Migration + Completion | 4 | [ ] |
+| 01-pseudocode.md | P — Pseudocode | — | [x] |
+| 02-architecture.md | A — Architecture | — | [x] |
+| 03-phase-0.md | R — SSH Shell Bridge | 4 | [x] |
+| 04-phase-1.md | R — Foundation: Core Types + Manifest | 5 | [x] |
+| 05-phase-2.md | R — RVF Builder + Init Atomicity + Witness Compaction | 7 | [x] |
+| 06-phase-3.md | R — eBPF Network Filter | 4 | [x] |
+| 07-phase-4.md | R — Kernel Builder + Upgrade + Air-Gap | 5 | [x] |
+| 08-phase-5.md | R — Firecracker Lifecycle + Session Lock + vsock Logs | 6 | [x] |
+| 09-phase-6.md | R — VEC_SEG Indexing + Stale Reconciliation | 5 | [x] |
+| 10-phase-7.md | R — MCP Server | 4 | [x] |
+| 11-phase-8.md | R — CLI Subcommands | 5 | [x] |
+| 12-phase-9.md | R — Session Persistence Hooks | 3 | [x] |
+| 13-phase-10.md | R — Integration Tests | 3 | [x] |
+| 14-phase-11.md | R — Format Version Migration + Completion | 4 | [x] |
 
 **Total tasks:** 60
 **Implementation phases:** 12 (Phase 0 through Phase 11)

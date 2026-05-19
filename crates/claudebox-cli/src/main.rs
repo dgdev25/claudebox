@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "claudebox", about = "Per-project isolated Firecracker VM for Claude Code")]
+#[command(name = "claudebox", about = "Per-project isolated Firecracker VM for Claude Code", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

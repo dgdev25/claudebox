@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn test_commit_renames_tmp_to_final() {
         let dir = tempdir().unwrap();
-        let mut tx = InitTransaction::new("myapp", dir.path()).unwrap();
+        let tx = InitTransaction::new("myapp", dir.path()).unwrap();
         std::fs::write(tx.tmp_path(), b"content").unwrap();
         tx.commit().unwrap();
         assert!(dir.path().join("myapp.rvf").exists());
