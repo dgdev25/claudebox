@@ -1,4 +1,5 @@
 pub mod allowlist;
+pub mod config;
 pub mod git_hooks;
 pub mod hypervisor;
 pub mod init;

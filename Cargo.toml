@@ -34,3 +34,4 @@ notify = "6"
 port_check = "0.3"
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"
+toml = "0.8"
