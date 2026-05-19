@@ -364,9 +364,32 @@ async fn main() -> anyhow::Result<()> {
             anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
             claudebox_core::snapshot::rollback_to_branch(&overlay, &branch)?;
         }
-        Commands::Audit { rvf, .. } => {
+        Commands::Audit { rvf, archive, json } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("audit command not yet fully implemented")
+            let entries = if let Some(month) = archive {
+                let archive_dir = claudebox_core::witness::witness_archive_dir(&rvf);
+                let paths =
+                    claudebox_witness::compaction::find_archives_for_month(&archive_dir, &month)?;
+                anyhow::ensure!(
+                    !paths.is_empty(),
+                    "no archive files found for month {month} in {}",
+                    archive_dir.display()
+                );
+                let mut all = Vec::new();
+                for path in &paths {
+                    let mut e = claudebox_witness::read_jsonl_entries(path)?;
+                    all.append(&mut e);
+                }
+                all.sort_by_key(|e| e.seq);
+                all
+            } else {
+                claudebox_core::witness::load_witness_entries(&rvf)?
+            };
+            if json {
+                println!("{}", claudebox_witness::audit::format_audit_json(&entries)?);
+            } else {
+                println!("{}", claudebox_witness::audit::format_audit_table(&entries));
+            }
         }
         Commands::Snapshot { rvf, action } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;

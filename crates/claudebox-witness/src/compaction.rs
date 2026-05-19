@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::WitnessEntry;
 
@@ -65,6 +65,72 @@ pub fn partition_entries(
         .map(|e| (*e).clone())
         .collect();
     (keep, archive)
+}
+
+/// Convert Unix epoch seconds to `(year, month)`.
+///
+/// Uses Howard Hinnant's civil-calendar algorithm — no external deps.
+pub fn epoch_secs_to_ym(secs: u64) -> (i32, u32) {
+    let days = (secs / 86400) as i64;
+    let z = days + 719_468;
+    let era = if z >= 0 { z / 146_097 } else { (z - 146_096) / 146_097 };
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m as u32)
+}
+
+/// List archive files in `archive_dir` whose epoch timestamp falls in the given `YYYY-MM` month.
+///
+/// Returns an empty `Vec` when the directory does not exist.
+/// Files must be named `witness-archive-{epoch_secs}.jsonl`.
+pub fn find_archives_for_month(archive_dir: &Path, month: &str) -> anyhow::Result<Vec<PathBuf>> {
+    if !archive_dir.exists() {
+        return Ok(vec![]);
+    }
+    let (target_y, target_m) = parse_ym(month)
+        .ok_or_else(|| anyhow::anyhow!("invalid month format '{month}' — expected YYYY-MM"))?;
+
+    let read_dir = std::fs::read_dir(archive_dir)
+        .map_err(|e| anyhow::anyhow!("failed to read archive dir: {e}"))?;
+
+    // Collect (epoch_secs, path) so we can sort numerically rather than
+    // lexicographically — robust if epoch widths ever differ.
+    let mut matches: Vec<(u64, PathBuf)> = Vec::new();
+    for entry in read_dir {
+        let entry = entry.map_err(|e| anyhow::anyhow!("directory read error: {e}"))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(epoch_str) = name
+            .strip_prefix("witness-archive-")
+            .and_then(|s| s.strip_suffix(".jsonl"))
+        else {
+            continue;
+        };
+        let Ok(epoch_secs) = epoch_str.parse::<u64>() else {
+            continue;
+        };
+        let (y, m) = epoch_secs_to_ym(epoch_secs);
+        if y == target_y && m == target_m {
+            matches.push((epoch_secs, entry.path()));
+        }
+    }
+    matches.sort_by_key(|(epoch, _)| *epoch);
+    Ok(matches.into_iter().map(|(_, p)| p).collect())
+}
+
+fn parse_ym(s: &str) -> Option<(i32, u32)> {
+    let (y, m) = s.split_once('-')?;
+    let year = y.parse::<i32>().ok()?;
+    let month = m.parse::<u32>().ok()?;
+    if !(1..=12).contains(&month) {
+        return None;
+    }
+    Some((year, month))
 }
 
 impl WitnessCompactor {
@@ -332,6 +398,57 @@ mod tests {
                 e.seq
             );
         }
+    }
+
+    #[test]
+    fn test_epoch_secs_to_ym_unix_epoch() {
+        assert_eq!(epoch_secs_to_ym(0), (1970, 1));
+    }
+
+    #[test]
+    fn test_epoch_secs_to_ym_known_dates() {
+        // 2026-01-01T00:00:00Z = 1767225600
+        assert_eq!(epoch_secs_to_ym(1_767_225_600), (2026, 1));
+        // 2026-02-01T00:00:00Z = 1769904000
+        assert_eq!(epoch_secs_to_ym(1_769_904_000), (2026, 2));
+        // 2026-01-15T00:00:00Z = 1768435200
+        assert_eq!(epoch_secs_to_ym(1_768_435_200), (2026, 1));
+    }
+
+    #[test]
+    fn test_find_archives_for_month_returns_matching_files() {
+        let dir = tempdir().unwrap();
+        // 2026-01-01: 1767225600
+        std::fs::write(dir.path().join("witness-archive-1767225600.jsonl"), "").unwrap();
+        // 2026-01-15: 1768435200
+        std::fs::write(dir.path().join("witness-archive-1768435200.jsonl"), "").unwrap();
+        // 2026-02-01: 1769904000
+        std::fs::write(dir.path().join("witness-archive-1769904000.jsonl"), "").unwrap();
+        // not a witness archive
+        std::fs::write(dir.path().join("other.txt"), "").unwrap();
+
+        let jan = find_archives_for_month(dir.path(), "2026-01").unwrap();
+        assert_eq!(jan.len(), 2);
+
+        let feb = find_archives_for_month(dir.path(), "2026-02").unwrap();
+        assert_eq!(feb.len(), 1);
+
+        let mar = find_archives_for_month(dir.path(), "2026-03").unwrap();
+        assert!(mar.is_empty());
+    }
+
+    #[test]
+    fn test_find_archives_missing_dir_returns_empty() {
+        let dir = tempdir().unwrap();
+        let result = find_archives_for_month(&dir.path().join("nonexistent"), "2026-01").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_archives_invalid_month_returns_error() {
+        let dir = tempdir().unwrap();
+        let err = find_archives_for_month(dir.path(), "not-a-month");
+        assert!(err.is_err());
     }
 
 }
