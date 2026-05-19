@@ -41,7 +41,14 @@ impl KernelBuilder {
                     Lang::Rust => "rust",
                     Lang::Go => "go",
                 };
-                format!("{}-{}", lang_str, p.version)
+                // Sanitize version: keep only alphanumeric, dot, and hyphen
+                // characters so the resulting string is safe as a path component.
+                let safe_version: String = p
+                    .version
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-')
+                    .collect();
+                format!("{}-{}", lang_str, safe_version)
             })
             .collect();
 
