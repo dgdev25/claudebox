@@ -30,23 +30,7 @@ pub fn manifest_sidecar_path(rvf_path: &Path) -> PathBuf {
 ///
 /// Returns an empty `Vec` when the file does not exist.
 pub fn load_witness_entries(rvf_path: &Path) -> anyhow::Result<Vec<WitnessEntry>> {
-    let path = witness_path_for_rvf(rvf_path);
-    if !path.exists() {
-        return Ok(vec![]);
-    }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("failed to read witness file: {e}"))?;
-    let mut entries = Vec::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let entry: WitnessEntry = serde_json::from_str(line)
-            .map_err(|e| anyhow::anyhow!("malformed witness entry: {e}"))?;
-        entries.push(entry);
-    }
-    Ok(entries)
+    claudebox_witness::read_jsonl_entries(&witness_path_for_rvf(rvf_path))
 }
 
 /// Append a signed `WitnessEntry` to the `.witness` JSONL sidecar.
@@ -80,14 +64,28 @@ pub fn append_witness_entry(rvf_path: &Path, event: WitnessEvent) -> anyhow::Res
     writeln!(file, "{json}").map_err(|e| anyhow::anyhow!("failed to write witness entry: {e}"))
 }
 
+/// Load the persisted signing key for an `.rvf`, or generate an ephemeral key.
+///
+/// If the key file exists but is the wrong size (corrupt), we log a warning
+/// instead of silently using an ephemeral key — using an ephemeral key would
+/// produce a chain whose signatures no auditor can verify against the
+/// previously published verifying key.
 fn load_or_ephemeral_key(rvf_path: &Path) -> SigningKey {
     let key_path = signing_key_path_for_rvf(rvf_path);
-    if let Ok(bytes) = std::fs::read(&key_path) {
-        if let Ok(arr) = <[u8; 32]>::try_from(bytes.as_slice()) {
-            return SigningKey::from_bytes(&arr);
-        }
+    match std::fs::read(&key_path) {
+        Ok(bytes) => match <[u8; 32]>::try_from(bytes.as_slice()) {
+            Ok(arr) => SigningKey::from_bytes(&arr),
+            Err(_) => {
+                tracing::warn!(
+                    path = %key_path.display(),
+                    len = bytes.len(),
+                    "signing key file has wrong length (expected 32 bytes); falling back to ephemeral key — chain non-repudiation lost"
+                );
+                SigningKey::generate(&mut rand::rngs::OsRng)
+            }
+        },
+        Err(_) => SigningKey::generate(&mut rand::rngs::OsRng),
     }
-    SigningKey::generate(&mut rand::rngs::OsRng)
 }
 
 #[cfg(test)]

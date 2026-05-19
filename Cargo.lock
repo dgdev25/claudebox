@@ -217,6 +217,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "claudebox-witness",
  "dirs",
  "ed25519-dalek",
  "rand",
@@ -227,6 +228,7 @@ dependencies = [
  "sha3",
  "tempfile",
  "thiserror",
+ "tokio",
  "toml",
  "tracing",
  "uuid",
@@ -282,10 +284,15 @@ name = "claudebox-migrate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "claudebox-core",
+ "claudebox-rvf",
  "claudebox-witness",
  "ed25519-dalek",
  "rand",
  "rvf-runtime",
+ "rvf-types",
+ "serde_json",
+ "tempfile",
  "thiserror",
  "tracing",
 ]
@@ -343,6 +350,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
+ "tempfile",
  "thiserror",
 ]
 

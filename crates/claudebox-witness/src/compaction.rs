@@ -145,23 +145,7 @@ impl WitnessCompactor {
     }
 
     fn load_entries(&self) -> anyhow::Result<Vec<WitnessEntry>> {
-        let path = self.witness_path();
-        if !path.exists() {
-            return Ok(vec![]);
-        }
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("failed to read witness file: {e}"))?;
-        let mut entries = Vec::new();
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let entry: WitnessEntry = serde_json::from_str(line)
-                .map_err(|e| anyhow::anyhow!("malformed witness entry: {e}"))?;
-            entries.push(entry);
-        }
-        Ok(entries)
+        crate::read_jsonl_entries(&self.witness_path())
     }
 
     fn write_witness(&self, entries: &[WitnessEntry]) -> anyhow::Result<()> {
@@ -276,7 +260,12 @@ mod tests {
         let witness = dir.path().join("test.rvf.witness");
         make_witness_file(&witness, 50);
 
-        let original_size = std::fs::metadata(&witness).unwrap().len();
+        // Append a trailing blank line so we can prove the file was rewritten
+        // (the rewrite path normalises blank lines away).
+        let original = std::fs::read_to_string(&witness).unwrap();
+        std::fs::write(&witness, format!("{original}\n\n")).unwrap();
+        let original_len = std::fs::metadata(&witness).unwrap().len();
+
         let compactor = WitnessCompactor {
             rvf_path: rvf,
             policy: WitnessPolicy { max_entries: 100, retention_days: 30 },
@@ -285,9 +274,13 @@ mod tests {
         let result = compactor.force_compact().unwrap();
         assert_eq!(result.entries_kept, 50);
         assert_eq!(result.entries_archived, 0);
-        // file was rewritten (size may differ slightly due to formatting)
-        assert!(std::fs::metadata(&witness).unwrap().len() > 0);
-        let _ = original_size;
+
+        let new_len = std::fs::metadata(&witness).unwrap().len();
+        assert!(new_len < original_len, "force_compact should normalise the file");
+
+        // And the rewritten content is still parseable as 50 entries.
+        let kept = crate::read_jsonl_entries(&witness).unwrap();
+        assert_eq!(kept.len(), 50);
     }
 
     #[test]
@@ -341,26 +334,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_compaction_result_counts_archived_entries() {
-        let result = CompactionResult {
-            entries_archived: 2_000,
-            entries_kept: 10_000,
-            archive_path: Some(std::path::PathBuf::from("/tmp/witness-2026-04.rvf")),
-        };
-        assert_eq!(result.entries_archived, 2_000);
-        assert_eq!(result.entries_kept, 10_000);
-        assert!(result.archive_path.is_some());
-    }
-
-    #[test]
-    fn test_compaction_noop_result_when_under_limit() {
-        let result = CompactionResult {
-            entries_archived: 0,
-            entries_kept: 50,
-            archive_path: None,
-        };
-        assert_eq!(result.entries_archived, 0);
-        assert!(result.archive_path.is_none());
-    }
 }

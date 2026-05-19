@@ -2,7 +2,33 @@ pub mod audit;
 pub mod compaction;
 pub mod writer;
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
+
+/// Read a JSONL witness file into a `Vec<WitnessEntry>`.
+///
+/// Returns an empty `Vec` if the file does not exist. Blank lines are skipped.
+/// Any malformed line aborts the read with an error — partial recovery is
+/// intentionally not supported because a broken line breaks the hash chain.
+pub fn read_jsonl_entries(path: &Path) -> anyhow::Result<Vec<WitnessEntry>> {
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("failed to read witness file: {e}"))?;
+    let mut entries = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let entry: WitnessEntry = serde_json::from_str(line)
+            .map_err(|e| anyhow::anyhow!("malformed witness entry: {e}"))?;
+        entries.push(entry);
+    }
+    Ok(entries)
+}
 
 /// A 32-byte hash stored as hex for JSON compatibility.
 pub type Hash32 = [u8; 32];
