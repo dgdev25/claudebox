@@ -11,5 +11,10 @@ mkdir -p "$(dirname "$SESSION_CTX")"
 # Read META_SEG and write session context for Claude Code
 claudebox-meta-export "$CLAUDEBOX_RVF" > "$SESSION_CTX"
 
-# Export MCP port for claudebox-mcp
-export CLAUDEBOX_MCP_PORT="${CLAUDEBOX_MCP_PORT:-7878}"
+# Validate and export MCP port for claudebox-mcp
+_port="${CLAUDEBOX_MCP_PORT:-7878}"
+if ! [[ "$_port" =~ ^[0-9]+$ ]] || [ "$_port" -lt 1 ] || [ "$_port" -gt 65535 ]; then
+    echo "Invalid CLAUDEBOX_MCP_PORT: ${_port}" >&2
+    exit 1
+fi
+export CLAUDEBOX_MCP_PORT="$_port"
