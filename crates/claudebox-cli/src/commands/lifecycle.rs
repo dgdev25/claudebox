@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::commands::adapters::{DefaultKernelResolver, DefaultVmAdapter, KernelResolver, VmAdapter};
@@ -26,11 +27,19 @@ pub async fn handle_init_command(
     .await?;
 
     let output_path = output_dir.join(format!("{}.rvf", manifest.project_name));
-    anyhow::ensure!(
-        !output_path.exists(),
-        "{} already exists — remove it before re-initialising",
-        output_path.display()
-    );
+    if output_path.exists() {
+        print!(
+            "{} already exists. Do you want me to delete and recreate it? (y/n): ",
+            output_path.display()
+        );
+        let _ = io::stdout().flush();
+        if prompt_yes_no() {
+            std::fs::remove_file(&output_path)
+                .map_err(|e| anyhow::anyhow!("failed to remove {}: {e}", output_path.display()))?;
+        } else {
+            anyhow::bail!("Initialization cancelled; existing RVF kept.");
+        }
+    }
 
     let builder = claudebox_rvf::builder::ApplianceBuilder::new(manifest)?;
     builder.build_skeleton(&output_path, kernel_from.as_deref())?;
@@ -201,7 +210,6 @@ pub fn handle_kernel_command(
 }
 
 fn git_commit_rvf(rvf_path: &Path, dir: &Path) {
-    use std::io::{self, Write};
     use std::process::Command;
 
     let in_repo = Command::new("git")
@@ -218,11 +226,7 @@ fn git_commit_rvf(rvf_path: &Path, dir: &Path) {
         print!("Do you want me to initialize Git? (y/n): ");
         let _ = io::stdout().flush();
 
-        let mut answer = String::new();
-        let should_init = io::stdin()
-            .read_line(&mut answer)
-            .map(|_| matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
-            .unwrap_or(false);
+        let should_init = prompt_yes_no();
 
         if should_init {
             let init_ok = Command::new("git")
@@ -291,4 +295,12 @@ fn git_commit_rvf(rvf_path: &Path, dir: &Path) {
             rvf_path.file_name().unwrap_or_default().to_string_lossy()
         );
     }
+}
+
+fn prompt_yes_no() -> bool {
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .map(|_| matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
+        .unwrap_or(false)
 }
