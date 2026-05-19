@@ -65,6 +65,11 @@ pub fn instance_pid_path(project_id: &str) -> PathBuf {
     data_dir().join("vms").join(project_id).join("qemu.pid")
 }
 
+/// Per-instance VM data directory (overlay, PID file, etc.).
+pub fn instance_vm_dir(project_id: &str) -> PathBuf {
+    data_dir().join("vms").join(project_id)
+}
+
 pub fn run_setup(force: bool) -> Result<()> {
     let data = data_dir();
     let kernels_dir = data.join("kernels").join(host_arch());

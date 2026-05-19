@@ -103,6 +103,39 @@ pub fn extract_kernel(opts: &StartOptions) -> anyhow::Result<ExtractedKernel> {
     })
 }
 
+/// Open the RVF and return the embedded `ClaudeBoxManifest` without writing
+/// any files — used by stop/status/kernel commands that only need metadata.
+pub fn read_manifest_from_rvf(rvf: &std::path::Path) -> anyhow::Result<crate::manifest::ClaudeBoxManifest> {
+    let store = RvfStore::open_readonly(rvf)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e:?}", rvf.display()))?;
+
+    let (hdr_bytes, remainder) = store
+        .extract_kernel()
+        .map_err(|e| anyhow::anyhow!("extract_kernel failed: {e:?}"))?
+        .ok_or_else(|| anyhow::anyhow!("no KERNEL_SEG in {}", rvf.display()))?;
+
+    anyhow::ensure!(hdr_bytes.len() == 128, "kernel header must be 128 bytes");
+
+    let mut hdr_array = [0u8; 128];
+    hdr_array.copy_from_slice(&hdr_bytes);
+    let header = KernelHeader::from_bytes(&hdr_array)
+        .map_err(|e| anyhow::anyhow!("invalid KernelHeader: {e:?}"))?;
+
+    let image_size = header.image_size as usize;
+    let cmdline_length = header.cmdline_length as usize;
+
+    anyhow::ensure!(
+        remainder.len() >= image_size + cmdline_length,
+        "remainder too short for kernel+cmdline"
+    );
+
+    let manifest_json = String::from_utf8(remainder[image_size..image_size + cmdline_length].to_vec())
+        .map_err(|e| anyhow::anyhow!("cmdline is not valid UTF-8: {e}"))?;
+
+    serde_json::from_str(&manifest_json)
+        .map_err(|e| anyhow::anyhow!("corrupt manifest in {}: {e}", rvf.display()))
+}
+
 /// Pull `project_id` from the manifest JSON without a full deserialize.
 /// Falls back to "default" if parsing fails.
 fn extract_project_id(manifest_json: &str) -> String {

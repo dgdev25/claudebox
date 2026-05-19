@@ -7,6 +7,17 @@ use rvf_runtime::options::RvfOptions;
 use rvf_runtime::RvfStore;
 use rvf_types::kernel::KernelArch;
 
+/// Map a manifest arch string ("x86_64", "aarch64") to the `KernelArch` byte
+/// used by `rvf-types`. Returns an error for unknown strings.
+pub fn arch_str_to_kernel_arch(arch: &str) -> anyhow::Result<u8> {
+    match arch {
+        "x86_64" => Ok(KernelArch::X86_64 as u8),
+        "aarch64" => Ok(KernelArch::Aarch64 as u8),
+        "riscv64" => Ok(KernelArch::Riscv64 as u8),
+        other => anyhow::bail!("unsupported kernel arch '{other}'"),
+    }
+}
+
 /// Builds a ClaudeBox RVF appliance from a manifest using `RvfStore`.
 ///
 /// Each appliance has its own unique Ed25519 signing key, retained for
@@ -59,9 +70,11 @@ impl ApplianceBuilder {
             vec![]
         };
 
+        let arch_byte = arch_str_to_kernel_arch(&self.manifest.kernel.arch)?;
+
         store
             .embed_kernel(
-                KernelArch::X86_64 as u8,
+                arch_byte,
                 0x01,
                 0,
                 &kernel_bytes,
@@ -140,6 +153,32 @@ mod tests {
             },
             witness: WitnessPolicy::default(),
         }
+    }
+
+    #[test]
+    fn test_arch_x86_64_maps_to_zero() {
+        assert_eq!(arch_str_to_kernel_arch("x86_64").unwrap(), KernelArch::X86_64 as u8);
+    }
+
+    #[test]
+    fn test_arch_aarch64_maps_to_one() {
+        assert_eq!(arch_str_to_kernel_arch("aarch64").unwrap(), KernelArch::Aarch64 as u8);
+    }
+
+    #[test]
+    fn test_arch_unknown_returns_error() {
+        assert!(arch_str_to_kernel_arch("mips64").is_err());
+    }
+
+    #[test]
+    fn test_build_skeleton_with_aarch64_arch() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("aarch64.rvf");
+        let mut manifest = test_manifest();
+        manifest.kernel.arch = "aarch64".into();
+        let builder = ApplianceBuilder::new(manifest).unwrap();
+        builder.build_skeleton(&output, None).unwrap();
+        assert!(output.exists());
     }
 
     #[test]
