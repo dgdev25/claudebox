@@ -49,6 +49,7 @@ impl ShutdownHook {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SessionState;
     use tempfile::tempdir;
 
     #[test]
