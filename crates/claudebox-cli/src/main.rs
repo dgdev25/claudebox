@@ -202,6 +202,9 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
 
+            // Resolve workspace to an absolute path so QEMU receives a stable path.
+            let workspace_abs = workspace.canonicalize().unwrap_or(workspace.clone());
+
             // Build and spawn QEMU
             let mut qemu_cmd = claudebox_firecracker::qemu::build_qemu_command(
                 &extracted.kernel_path,
@@ -209,6 +212,7 @@ async fn main() -> anyhow::Result<()> {
                 extracted.ssh_port,
                 512,
                 rootfs.as_deref(),
+                Some(&workspace_abs),
             )?;
 
             eprintln!(

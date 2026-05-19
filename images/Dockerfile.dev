@@ -55,13 +55,15 @@ RUN echo 'ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' >> /etc/inittab
 RUN printf 'auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n' \
     > /etc/network/interfaces
 
-# Filesystem table: root on /dev/vda (virtio disk)
-RUN printf '/dev/vda\t/\text4\tdefaults\t0 1\n' > /etc/fstab
+# Filesystem table: root on /dev/vda, workspace via virtio-9p
+# nofail: boot succeeds even if host didn't pass -virtfs (e.g. initramfs path)
+RUN printf '/dev/vda\t/\text4\tdefaults\t0 1\n' > /etc/fstab && \
+    printf 'workspace\t/workspace\t9p\ttrans=virtio,version=9p2000.L,nofail\t0 0\n' >> /etc/fstab
 
 # Hostname
 RUN echo "claudebox" > /etc/hostname
 
-# Empty mountpoints for kernel to populate
-RUN mkdir -p /dev /proc /sys /run /tmp && chmod 1777 /tmp
+# Empty mountpoints for kernel to populate, plus /workspace for host project files
+RUN mkdir -p /dev /proc /sys /run /tmp /workspace && chmod 1777 /tmp
 
 CMD ["/sbin/init"]

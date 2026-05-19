@@ -76,12 +76,14 @@ enum BootMode<'a> {
 /// - `ssh_port` — host port forwarded to guest :22
 /// - `memory_mb` — guest RAM in MiB
 /// - `rootfs_path` — persistent dev image (qcow2/img); takes priority over initramfs
+/// - `workspace_path` — host directory shared into guest at `/workspace` via virtio-9p
 pub fn build_qemu_command(
     kernel_path: &Path,
     initramfs_path: Option<&Path>,
     ssh_port: u16,
     memory_mb: u32,
     rootfs_path: Option<&Path>,
+    workspace_path: Option<&Path>,
 ) -> anyhow::Result<Command> {
     let qemu_bin = find_qemu("x86_64")?;
     let mut cmd = Command::new(&qemu_bin);
@@ -146,6 +148,17 @@ pub fn build_qemu_command(
             ));
             cmd.arg("-append")
                 .arg("root=/dev/vda rw console=ttyS0 panic=-1");
+
+            // Workspace: share host directory into guest at /workspace via virtio-9p.
+            // q35 machine has PCIe, so virtio-9p-pci is available.
+            // mapped-xattr maps Linux uid/gid into APFS/HFS+ xattrs — no root on host.
+            if let Some(ws) = workspace_path {
+                let ws_abs = ws.canonicalize().unwrap_or_else(|_| ws.to_path_buf());
+                cmd.arg("-virtfs").arg(format!(
+                    "local,path={},mount_tag=workspace,security_model=mapped-xattr,id=ws0",
+                    ws_abs.display()
+                ));
+            }
         }
         BootMode::KernelInitramfs { initramfs } => {
             cmd.arg("-initrd").arg(initramfs);
