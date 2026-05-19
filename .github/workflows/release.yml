@@ -44,12 +44,13 @@ jobs:
 
       - name: Install Linux deps
         if: matrix.os == 'ubuntu-22.04'
-        run: sudo apt-get install -y musl-tools
+        run: sudo apt-get update && sudo apt-get install -y ca-certificates
 
       - name: Build
         run: |
           cargo build --release --target "${{ matrix.target }}" -p claudebox-cli
-          cp "target/${{ matrix.target }}/release/claudebox-cli" "${{ matrix.artifact }}"
+          cp "target/${{ matrix.target }}/release/claudebox" "${{ matrix.artifact }}"
+          chmod +x "${{ matrix.artifact }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -75,14 +76,24 @@ jobs:
           find dist/ -type d -empty -delete
           ls -lh dist/
 
-      - name: Bundle kernel and upload assets
+      - name: Bundle assets, checksums, and upload
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "claudebox $TAG" --notes "Automated release for $TAG"
+          fi
+
           if [ -f kernels/bzImage ]; then
             cp kernels/bzImage dist/bzImage-x86_64
           fi
+
+          (
+            cd dist
+            sha256sum * > SHA256SUMS.txt
+          )
+
           gh release upload "$TAG" dist/* --clobber
 
       - name: Update release notes
