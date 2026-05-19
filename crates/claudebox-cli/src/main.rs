@@ -350,21 +350,40 @@ async fn main() -> anyhow::Result<()> {
             };
             println!("{}", claudebox_core::status::format_status(&info));
         }
-        Commands::Branch { rvf, .. } => {
+        Commands::Branch { rvf, name } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("branch command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
+            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
+            claudebox_core::snapshot::create_branch(&overlay, &name)?;
         }
-        Commands::Rollback { rvf, .. } => {
+        Commands::Rollback { rvf, branch } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("rollback command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
+            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
+            claudebox_core::snapshot::rollback_to_branch(&overlay, &branch)?;
         }
         Commands::Audit { rvf, .. } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("audit command not yet fully implemented")
         }
-        Commands::Snapshot { rvf, .. } => {
+        Commands::Snapshot { rvf, action } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("snapshot command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
+            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
+            let op = match action {
+                SnapshotAction::Create { name } =>
+                    claudebox_core::snapshot::SnapshotOp::Create(name),
+                SnapshotAction::List =>
+                    claudebox_core::snapshot::SnapshotOp::List,
+                SnapshotAction::Restore { name } =>
+                    claudebox_core::snapshot::SnapshotOp::Restore(name),
+                SnapshotAction::Export { name, output } =>
+                    claudebox_core::snapshot::SnapshotOp::Export { name, output },
+            };
+            claudebox_core::snapshot::run_snapshot(&overlay, op)?;
         }
         Commands::UpgradeKernel { rvf } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
@@ -397,12 +416,32 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Migrate { rvf } => {
-            claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("migrate command not yet fully implemented")
+            let schema_version = claudebox_migrate::read_schema_version(&rvf).unwrap_or(1);
+            let chain = claudebox_migrate::MigrationChain::new();
+            let latest = chain.latest_version();
+            if schema_version == latest {
+                eprintln!("Already at latest schema version (v{latest}), nothing to do.");
+            } else if schema_version > latest {
+                anyhow::bail!(
+                    "{} schema v{schema_version} is newer than this binary (max v{latest}); \
+                     upgrade claudebox",
+                    rvf.display()
+                );
+            } else {
+                eprintln!(
+                    "Migrating {} from v{schema_version} to v{latest}…",
+                    rvf.display()
+                );
+                let new_version = chain.migrate_to_latest(&rvf, schema_version)?;
+                eprintln!("Migration complete — now at v{new_version}.");
+            }
         }
         Commands::Compact { rvf } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("compact command not yet fully implemented")
+            let manifest = claudebox_core::start::read_manifest_from_rvf(&rvf)?;
+            let overlay = claudebox_core::setup::instance_overlay_path(&manifest.project_id);
+            anyhow::ensure!(overlay.exists(), "no overlay found — is the VM initialised?");
+            claudebox_core::snapshot::compact_overlay(&overlay)?;
         }
         Commands::UpdateAllowlist { rvf, add, remove } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
