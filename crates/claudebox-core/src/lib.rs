@@ -1,3 +1,4 @@
+pub mod allowlist;
 pub mod git_hooks;
 pub mod hypervisor;
 pub mod init;
@@ -6,3 +7,4 @@ pub mod preflight;
 pub mod shell_bridge;
 pub mod staleness;
 pub mod start;
+pub mod status;
