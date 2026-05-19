@@ -13,7 +13,10 @@ pub struct SessionLock {
     lock_path: PathBuf,
 }
 
-/// Check if a PID is alive using the cross-platform `kill -0` command.
+/// Check if a PID is alive using `kill -0` (POSIX; Linux + macOS only).
+///
+/// Returns false if the process does not exist or is not accessible.
+/// ClaudeBox targets Linux and macOS only — Windows is out of scope for v1.
 fn pid_is_alive(pid: u32) -> bool {
     std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])
@@ -67,8 +70,21 @@ impl SessionLock {
 
         let json = serde_json::to_string(contents)
             .map_err(|e| anyhow::anyhow!("failed to serialise lock contents: {e}"))?;
+
+        // Known limitation: there is a TOCTOU window between the stale-lock
+        // removal above and this write. Two simultaneous `claudebox start`
+        // invocations could both pass the liveness check and race here.
+        // For a local single-user CLI tool the risk is negligible; a proper
+        // fix would use O_CREAT|O_EXCL via OpenOptions::create_new(true).
         std::fs::write(&lock_path, &json)
             .map_err(|e| anyhow::anyhow!("failed to write lock file: {e}"))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| anyhow::anyhow!("failed to set lock file permissions: {e}"))?;
+        }
 
         Ok(SessionLock { lock_path })
     }
