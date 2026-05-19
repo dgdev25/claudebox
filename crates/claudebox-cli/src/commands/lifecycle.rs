@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use crate::commands::adapters::{DefaultKernelResolver, DefaultVmAdapter, KernelResolver, VmAdapter};
 use crate::commands::context::AppContext;
@@ -59,6 +60,8 @@ pub async fn handle_init_command(
 pub async fn handle_start_command(
     rvf: PathBuf,
     workspace: PathBuf,
+    isolated: bool,
+    mount_dir: Option<PathBuf>,
     rootfs: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     claudebox_migrate::check_and_migrate(&rvf, true)?;
@@ -110,6 +113,11 @@ pub async fn handle_start_command(
     };
 
     let workspace_abs = workspace.canonicalize().unwrap_or_else(|_| workspace.clone());
+    let workspace_for_vm = if isolated {
+        None
+    } else {
+        Some(workspace_abs.as_path())
+    };
 
     let mut qemu_cmd = vm.build_qemu_command(
         &extracted.kernel_path,
@@ -117,7 +125,7 @@ pub async fn handle_start_command(
         extracted.ssh_port,
         512,
         disk_path.as_deref(),
-        Some(&workspace_abs),
+        workspace_for_vm,
         &guest_arch,
     )?;
 
@@ -142,10 +150,35 @@ pub async fn handle_start_command(
     ));
     output::info("Password: claudebox");
 
+    let mounted_path = if isolated {
+        let default_mount = workspace_abs.join(format!("{}.isolated", manifest.project_name));
+        let local_mount = mount_dir.unwrap_or(default_mount);
+        match mount_isolated_workspace(extracted.ssh_port, &local_mount) {
+            Ok(()) => {
+                output::info(&format!(
+                    "Isolated workspace mounted at {}",
+                    local_mount.display()
+                ));
+                Some(local_mount)
+            }
+            Err(e) => {
+                eprintln!("Warning: isolated mount failed: {e}");
+                eprintln!("You can still connect directly: ssh -p {} root@localhost", extracted.ssh_port);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let mut child = child;
     let status = child
         .wait()
         .map_err(|e| anyhow::anyhow!("QEMU wait failed: {e}"))?;
+
+    if let Some(mount_point) = mounted_path.as_deref() {
+        let _ = unmount_isolated_workspace(mount_point);
+    }
 
     let _ = std::fs::remove_file(&pid_path);
 
@@ -153,6 +186,86 @@ pub async fn handle_start_command(
         anyhow::bail!("QEMU exited with status {status}");
     }
     Ok(())
+}
+
+fn mount_isolated_workspace(ssh_port: u16, mount_point: &Path) -> anyhow::Result<()> {
+    if !command_exists("sshfs") {
+        anyhow::bail!(
+            "sshfs is not installed. Install it and retry isolated mode.\n\
+             Ubuntu/Debian: sudo apt install sshfs\n\
+             macOS: brew install macfuse sshfs-mac"
+        );
+    }
+
+    std::fs::create_dir_all(mount_point).map_err(|e| {
+        anyhow::anyhow!("failed to create mount directory {}: {e}", mount_point.display())
+    })?;
+
+    for _ in 0..20 {
+        let mut cmd = Command::new("sshfs");
+        cmd.args([
+            "-o",
+            "password_stdin",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "reconnect",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-p",
+            &ssh_port.to_string(),
+            "root@127.0.0.1:/workspace",
+        ])
+        .arg(mount_point)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("failed to run sshfs: {e}"))?;
+        if let Some(stdin) = child.stdin.as_mut() {
+            let _ = stdin.write_all(b"claudebox\n");
+        }
+        if child.wait().map(|s| s.success()).unwrap_or(false) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    anyhow::bail!("unable to mount VM workspace via sshfs after retries")
+}
+
+fn unmount_isolated_workspace(mount_point: &Path) -> anyhow::Result<()> {
+    let status = if command_exists("fusermount") {
+        Command::new("fusermount")
+            .args(["-u"])
+            .arg(mount_point)
+            .status()
+            .map_err(|e| anyhow::anyhow!("failed to run fusermount: {e}"))?
+    } else {
+        Command::new("umount")
+            .arg(mount_point)
+            .status()
+            .map_err(|e| anyhow::anyhow!("failed to run umount: {e}"))?
+    };
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("unmount failed for {}", mount_point.display())
+    }
+}
+
+fn command_exists(name: &str) -> bool {
+    Command::new("which")
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 pub async fn handle_upgrade_kernel_command(

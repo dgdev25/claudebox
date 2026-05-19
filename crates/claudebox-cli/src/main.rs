@@ -27,6 +27,12 @@ pub enum Commands {
         rvf: PathBuf,
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
+        /// Run without host workspace mount and expose VM workspace as a local folder via sshfs.
+        #[arg(long)]
+        isolated: bool,
+        /// Local directory to mount VM /workspace into when --isolated is used.
+        #[arg(long)]
+        mount_dir: Option<PathBuf>,
         /// Optional disk image (.qcow2 or .img) to boot instead of building
         /// an initramfs — required on macOS.
         /// Download: curl -fLO https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-virt-3.21.0-x86_64.iso
@@ -144,8 +150,8 @@ async fn main() -> anyhow::Result<()> {
             allow,
             kernel_from,
         } => commands::lifecycle::handle_init_command(name, lang, allow, kernel_from).await?,
-        Commands::Start { rvf, workspace, rootfs } =>
-            commands::lifecycle::handle_start_command(rvf, workspace, rootfs).await?,
+        Commands::Start { rvf, workspace, isolated, mount_dir, rootfs } =>
+            commands::lifecycle::handle_start_command(rvf, workspace, isolated, mount_dir, rootfs).await?,
         Commands::Stop { rvf } => {
             commands::runtime::handle_stop_command(&rvf)?;
         }
