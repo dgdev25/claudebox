@@ -22,7 +22,14 @@ cargo build --release
 
 ## Quickstart
 
-1. Initialize a project appliance:
+1. Quick interactive setup (recommended):
+
+```bash
+cd /path/to/project
+claudebox new
+```
+
+2. Or initialize manually:
 
 ```bash
 cd /path/to/project
@@ -31,20 +38,20 @@ claudebox init myapp --kernel-from ~/.claudebox/kernels/$(uname -m)/kernel
 
 `--lang` is optional. If omitted, claudebox auto-detects from project files (`package.json`, `pyproject.toml`, `requirements.txt`, `Cargo.toml`, `go.mod`).
 
-2. Start the VM:
+3. Start the VM:
 
 ```bash
 claudebox start myapp.rvf --workspace .
 ```
 
-3. Check status / logs:
+4. Check status / logs:
 
 ```bash
 claudebox status myapp.rvf
 claudebox logs myapp.rvf --follow
 ```
 
-4. Stop the VM:
+5. Stop the VM:
 
 ```bash
 claudebox stop myapp.rvf

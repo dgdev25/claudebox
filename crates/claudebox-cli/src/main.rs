@@ -12,6 +12,11 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Interactive project setup wizard (recommended for most users).
+    New {
+        /// Optional project name; if omitted, wizard will ask.
+        name: Option<String>,
+    },
     Init {
         name: String,
         /// Optional language profile(s): `node@22`, `python@3.12`, `rust@1.87`, `go@1.22`.
@@ -144,6 +149,9 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::New { name } => {
+            commands::lifecycle::handle_new_command(name).await?;
+        }
         Commands::Init {
             name,
             lang,
@@ -219,6 +227,15 @@ mod tests {
                 assert_eq!(lang, vec!["node@22"]);
             }
             _ => panic!("Expected Init"),
+        }
+    }
+
+    #[test]
+    fn test_new_subcommand_parses_optional_name() {
+        let cli = Cli::try_parse_from(["claudebox", "new", "myapp"]).unwrap();
+        match cli.command {
+            Commands::New { name } => assert_eq!(name.as_deref(), Some("myapp")),
+            _ => panic!("Expected New"),
         }
     }
 

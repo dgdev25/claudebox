@@ -6,6 +6,70 @@ use crate::commands::adapters::{DefaultKernelResolver, DefaultVmAdapter, KernelR
 use crate::commands::context::AppContext;
 use crate::commands::output;
 
+pub async fn handle_new_command(name: Option<String>) -> anyhow::Result<()> {
+    println!("ClaudeBox Setup Wizard");
+    println!("======================");
+
+    let project_name = match name {
+        Some(n) if !n.trim().is_empty() => n,
+        _ => prompt_text("Project name", "myapp")?,
+    };
+
+    println!("\nEnvironment profile:");
+    println!("  1) Light  (minimal profile, fast setup)");
+    println!("  2) Full   (node, python, rust, go profile)");
+    println!("  3) Custom (choose explicitly)");
+    let profile = prompt_choice("Select profile [1-3]", &["1", "2", "3"], "1")?;
+
+    let lang = match profile.as_str() {
+        "1" => Vec::new(),
+        "2" => vec![
+            "node@latest".to_string(),
+            "python@latest".to_string(),
+            "rust@latest".to_string(),
+            "go@latest".to_string(),
+        ],
+        _ => {
+            let raw = prompt_text(
+                "Custom languages (comma-separated, e.g. node@22,rust@latest)",
+                "node@latest",
+            )?;
+            raw.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let isolated = prompt_yes_no_with_default(
+        "Use isolated mode (VM workspace mounted locally via sshfs)? (y/n)",
+        true,
+    );
+
+    let start_now = prompt_yes_no_with_default("Start environment now after init? (y/n)", true);
+
+    handle_init_command(project_name.clone(), lang, Vec::new(), None).await?;
+
+    if start_now {
+        let rvf = PathBuf::from(format!("{project_name}.rvf"));
+        let mount_dir = if isolated {
+            Some(std::env::current_dir()?.join(format!("{project_name}.isolated")))
+        } else {
+            None
+        };
+        handle_start_command(rvf, PathBuf::from("."), isolated, mount_dir, None).await?;
+    } else {
+        println!("\nNext step:");
+        if isolated {
+            println!("  claudebox start {}.rvf --isolated", project_name);
+        } else {
+            println!("  claudebox start {}.rvf", project_name);
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn handle_init_command(
     name: String,
     lang: Vec<String>,
@@ -416,4 +480,44 @@ fn prompt_yes_no() -> bool {
         .read_line(&mut answer)
         .map(|_| matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
         .unwrap_or(false)
+}
+
+fn prompt_yes_no_with_default(prompt: &str, default_yes: bool) -> bool {
+    let suffix = if default_yes { " [Y/n]: " } else { " [y/N]: " };
+    print!("{prompt}{suffix}");
+    let _ = io::stdout().flush();
+    let mut answer = String::new();
+    if io::stdin().read_line(&mut answer).is_err() {
+        return default_yes;
+    }
+    let trimmed = answer.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return default_yes;
+    }
+    matches!(trimmed.as_str(), "y" | "yes")
+}
+
+fn prompt_text(prompt: &str, default: &str) -> anyhow::Result<String> {
+    print!("{prompt} [{default}]: ");
+    let _ = io::stdout().flush();
+    let mut value = String::new();
+    io::stdin()
+        .read_line(&mut value)
+        .map_err(|e| anyhow::anyhow!("failed to read input: {e}"))?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Ok(default.to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn prompt_choice(prompt: &str, allowed: &[&str], default: &str) -> anyhow::Result<String> {
+    loop {
+        let value = prompt_text(prompt, default)?;
+        if allowed.contains(&value.as_str()) {
+            return Ok(value);
+        }
+        eprintln!("Invalid choice: {value}. Allowed: {}", allowed.join(", "));
+    }
 }
