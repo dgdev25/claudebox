@@ -44,7 +44,6 @@ fn parse_lang_spec(spec: &str) -> anyhow::Result<SingleProfile> {
 /// `opts.allow` are merged in.
 pub fn build_manifest_from_opts(opts: &InitOptions) -> anyhow::Result<ClaudeBoxManifest> {
     anyhow::ensure!(!opts.name.is_empty(), "project name must not be empty");
-    anyhow::ensure!(!opts.lang.is_empty(), "at least one language must be specified");
 
     let profiles: Vec<SingleProfile> = opts
         .lang
@@ -52,15 +51,11 @@ pub fn build_manifest_from_opts(opts: &InitOptions) -> anyhow::Result<ClaudeBoxM
         .map(|s| parse_lang_spec(s).with_context(|| format!("parsing language spec {s:?}")))
         .collect::<anyhow::Result<_>>()?;
 
-    let language = if profiles.len() == 1 {
-        LanguageProfile::Single(
-            profiles
-                .into_iter()
-                .next()
-                .expect("profiles.len() == 1 checked on the line above"),
-        )
-    } else {
-        LanguageProfile::Multi(profiles)
+    // No --lang → base environment; the dev image has common tools pre-installed.
+    let language = match profiles.len() {
+        0 => LanguageProfile::Multi(vec![]),
+        1 => LanguageProfile::Single(profiles.into_iter().next().unwrap()),
+        _ => LanguageProfile::Multi(profiles),
     };
 
     let profile_refs: Vec<&SingleProfile> = language.profiles();

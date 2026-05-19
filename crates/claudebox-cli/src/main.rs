@@ -171,6 +171,8 @@ async fn main() -> anyhow::Result<()> {
                      --kernel-from <bzImage> to enable `claudebox start`."
                 );
             }
+
+            git_commit_rvf(&output_path, &output_dir);
         }
         Commands::Start { rvf, workspace, rootfs } => {
             // Auto-detect rootfs from setup data dir on macOS when flag not supplied.
@@ -289,6 +291,66 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Commit the `.rvf` file to git if the directory is inside a git repo.
+/// Prints a warning if no git repo is found — without git, file operations
+/// inside the VM are not recoverable.
+fn git_commit_rvf(rvf_path: &std::path::Path, dir: &std::path::Path) {
+    use std::process::Command;
+
+    // Check whether we're inside a git repo.
+    let in_repo = Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !in_repo {
+        eprintln!(
+            "\nWarning: no git repository found in {}.\n\
+             Without git, file changes made by Claude inside the VM cannot be undone.\n\
+             Run `git init && git add . && git commit -m 'initial'` before starting.",
+            dir.display()
+        );
+        return;
+    }
+
+    // Stage the .rvf file.
+    let staged = Command::new("git")
+        .args(["add", &rvf_path.to_string_lossy()])
+        .current_dir(dir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !staged {
+        eprintln!("Warning: could not stage {} in git.", rvf_path.display());
+        return;
+    }
+
+    // Commit — non-fatal if it fails (e.g. nothing changed, no identity configured).
+    let committed = Command::new("git")
+        .args([
+            "commit",
+            "-m",
+            &format!(
+                "chore: add claudebox environment ({})",
+                rvf_path.file_name().unwrap_or_default().to_string_lossy()
+            ),
+        ])
+        .current_dir(dir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if committed {
+        eprintln!(
+            "Committed {} to git — file changes inside the VM are recoverable via git.",
+            rvf_path.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
 }
 
 #[cfg(test)]
