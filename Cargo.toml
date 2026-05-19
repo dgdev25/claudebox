@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/claudebox-cli",
+    "crates/claudebox-core",
+    "crates/claudebox-rvf",
+    "crates/claudebox-firecracker",
+    "crates/claudebox-ebpf",
+    "crates/claudebox-vec",
+    "crates/claudebox-witness",
+    "crates/claudebox-meta",
+    "crates/claudebox-migrate",
+    "crates/claudebox-logd",
+]
+
+[workspace.dependencies]
+rvf-runtime = "0.2"
+rvf-crypto = "0.2"
+rvf-types = "0.1"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+sha3 = "0.10"
+fastembed = "3"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+notify = "6"
+port-check = "0.2"
+uuid = { version = "1", features = ["v4"] }
