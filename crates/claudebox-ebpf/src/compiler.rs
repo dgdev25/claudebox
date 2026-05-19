@@ -81,7 +81,13 @@ impl EbpfCompiler {
             let out_path = PathBuf::from("/tmp/claudebox_filter.o");
             let out_str = out_path
                 .to_str()
-                .expect("output path is valid UTF-8");
+                .ok_or_else(|| anyhow::anyhow!("output path is not valid UTF-8"))?;
+
+            // filter.c path is relative to workspace root; callers must set CWD
+            // to the workspace root before invoking compile() (enforced by run_init).
+            let filter_src = std::env::var("CLAUDEBOX_WORKSPACE_ROOT")
+                .map(|root| format!("{root}/ebpf/network_filter/filter.c"))
+                .unwrap_or_else(|_| "ebpf/network_filter/filter.c".to_string());
 
             let clang_out = Command::new("clang")
                 .args([
@@ -89,7 +95,7 @@ impl EbpfCompiler {
                     "-target",
                     "bpf",
                     "-c",
-                    "ebpf/network_filter/filter.c",
+                    &filter_src,
                     "-o",
                     out_str,
                 ])
@@ -163,6 +169,11 @@ impl SquidConfigGenerator {
     /// - Emits `http_access allow` for each ACL.
     /// - Ends with `http_access deny all` to block everything else.
     pub fn generate(&self) -> anyhow::Result<String> {
+        // Validate dns_server is a parseable IP address before writing it verbatim.
+        self.dns_server
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| anyhow::anyhow!("dns_server must be a valid IP address, got {:?}", self.dns_server))?;
+
         let mut conf = String::new();
 
         conf.push_str("# ClaudeBox squid.conf — auto-generated macOS fallback\n");
