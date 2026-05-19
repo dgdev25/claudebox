@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod compaction;
 pub mod writer;
 
