@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -10,11 +10,9 @@ const DEV_IMAGE_VERSION: &str = "0.1.0";
 #[cfg(target_arch = "aarch64")]
 const DEV_IMAGE_NAME: &str = "claudebox-dev-0.1.0-aarch64.qcow2";
 #[cfg(target_arch = "aarch64")]
-const KERNEL_URL: &str =
-    "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/kernel-aarch64";
+const KERNEL_ASSET: &str = "kernel-aarch64";
 #[cfg(target_arch = "aarch64")]
-const INITRAMFS_URL: &str =
-    "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/initramfs-aarch64";
+const INITRAMFS_ASSET: &str = "initramfs-aarch64";
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const DEV_IMAGE_URL: &str =
     "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/claudebox-dev-0.1.0-aarch64.qcow2";
@@ -22,11 +20,11 @@ const DEV_IMAGE_URL: &str =
 #[cfg(not(target_arch = "aarch64"))]
 const DEV_IMAGE_NAME: &str = "claudebox-dev-0.1.0-x86_64.qcow2";
 #[cfg(not(target_arch = "aarch64"))]
-const KERNEL_URL: &str =
-    "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/kernel-x86_64";
+const KERNEL_ASSET: &str = "kernel-x86_64";
 #[cfg(not(target_arch = "aarch64"))]
-const INITRAMFS_URL: &str =
-    "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/initramfs-x86_64";
+const KERNEL_ASSET_LEGACY: &str = "bzImage-x86_64";
+#[cfg(not(target_arch = "aarch64"))]
+const INITRAMFS_ASSET: &str = "initramfs-x86_64";
 #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
 const DEV_IMAGE_URL: &str =
     "https://github.com/dgdev25/claudebox/releases/download/v0.1.0/claudebox-dev-0.1.0-x86_64.qcow2";
@@ -196,21 +194,97 @@ fn setup_kernel(kernels_dir: &Path, force: bool) -> Result<()> {
         }
     }
 
-    // 2. Download kernel from GitHub releases.
+    // 2. Download kernel from GitHub releases (latest).
+    let kernel_urls = kernel_asset_urls();
+    let initramfs_url = latest_release_asset_url(INITRAMFS_ASSET);
     eprintln!("[→] Downloading kernel ({arch})...");
-    eprintln!("    {KERNEL_URL}");
-    download_file(KERNEL_URL, &kernel_dest)
-        .map_err(|e| anyhow::anyhow!("[✗] Kernel download failed: {e}"))?;
+    for url in &kernel_urls {
+        eprintln!("    {url}");
+    }
+    let kernel_downloaded = kernel_urls
+        .iter()
+        .any(|url| download_file(url, &kernel_dest).is_ok());
+    if !kernel_downloaded {
+        eprintln!("[!] Release kernel unavailable; trying host kernel fallback...");
+        if let Some(host_kernel) = host_linux_kernel_candidate() {
+            std::fs::copy(&host_kernel, &kernel_dest)
+                .with_context(|| format!("failed to copy host kernel {}", host_kernel.display()))?;
+            eprintln!("[✓] Kernel copied from {}", host_kernel.display());
+        } else {
+            anyhow::bail!("[✗] Kernel download failed and no host kernel fallback found");
+        }
+    }
     eprintln!("[✓] Kernel: {}", kernel_dest.display());
 
-    // 3. Download initramfs from GitHub releases.
+    // 3. Download initramfs from GitHub releases (latest).
     eprintln!("[→] Downloading initramfs ({arch})...");
-    eprintln!("    {INITRAMFS_URL}");
-    download_file(INITRAMFS_URL, &initramfs_dest)
-        .map_err(|e| anyhow::anyhow!("[✗] Initramfs download failed: {e}"))?;
-    eprintln!("[✓] Initramfs: {}", initramfs_dest.display());
+    eprintln!("    {initramfs_url}");
+    let initramfs_downloaded = download_file(&initramfs_url, &initramfs_dest).is_ok();
+    if !initramfs_downloaded {
+        eprintln!("[!] Release initramfs unavailable; trying host initramfs fallback...");
+        if let Some(host_initrd) = host_linux_initramfs_candidate() {
+            std::fs::copy(&host_initrd, &initramfs_dest).with_context(|| {
+                format!("failed to copy host initramfs {}", host_initrd.display())
+            })?;
+            eprintln!("[✓] Initramfs copied from {}", host_initrd.display());
+        } else {
+            eprintln!(
+                "[!] No host initramfs fallback found; start may attempt runtime initramfs build"
+            );
+        }
+    }
+    if initramfs_dest.exists() {
+        eprintln!("[✓] Initramfs: {}", initramfs_dest.display());
+    } else {
+        eprintln!("[!] Initramfs not available after setup");
+    }
 
     Ok(())
+}
+
+fn latest_release_asset_url(asset_name: &str) -> String {
+    format!(
+        "https://github.com/dgdev25/claudebox/releases/latest/download/{asset_name}"
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+fn kernel_asset_urls() -> Vec<String> {
+    vec![latest_release_asset_url(KERNEL_ASSET)]
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn kernel_asset_urls() -> Vec<String> {
+    vec![
+        latest_release_asset_url(KERNEL_ASSET),
+        latest_release_asset_url(KERNEL_ASSET_LEGACY),
+    ]
+}
+
+fn host_linux_kernel_candidate() -> Option<PathBuf> {
+    if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        newest_boot_file_matching("vmlinuz-*")
+    } else {
+        None
+    }
+}
+
+fn host_linux_initramfs_candidate() -> Option<PathBuf> {
+    if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        newest_boot_file_matching("initrd.img-*")
+    } else {
+        None
+    }
+}
+
+fn newest_boot_file_matching(glob_pattern: &str) -> Option<PathBuf> {
+    let mut candidates = glob::glob(&format!("/boot/{glob_pattern}"))
+        .ok()?
+        .flatten()
+        .filter(|p| p.is_file())
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.pop()
 }
 
 #[cfg(target_os = "macos")]
