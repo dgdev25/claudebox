@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use crate::{HistoryEntry, HistoryEntryKind, SessionState};
+use crate::{HistoryEntry, HistoryEntryKind};
 
 pub struct BootHook {
     pub rvf_path: PathBuf,
