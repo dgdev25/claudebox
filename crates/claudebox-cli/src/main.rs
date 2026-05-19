@@ -64,6 +64,10 @@ pub enum Commands {
     },
     UpgradeKernel {
         rvf: PathBuf,
+        /// Path to the new kernel image (bzImage) to embed.
+        /// Defaults to the cached kernel from `claudebox setup`.
+        #[arg(long)]
+        kernel_from: Option<PathBuf>,
     },
     Kernel {
         rvf: PathBuf,
@@ -408,9 +412,23 @@ async fn main() -> anyhow::Result<()> {
             };
             claudebox_core::snapshot::run_snapshot(&overlay, op)?;
         }
-        Commands::UpgradeKernel { rvf } => {
+        Commands::UpgradeKernel { rvf, kernel_from } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
-            anyhow::bail!("upgrade-kernel command not yet fully implemented")
+            let kernel_path = kernel_from
+                .or_else(|| {
+                    let default = claudebox_core::setup::default_kernel_path();
+                    if default.exists() { Some(default) } else { None }
+                })
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no new kernel found; pass --kernel-from <path> or run `claudebox setup` first"
+                    )
+                })?;
+            let upgrader = claudebox_rvf::kernel_upgrade::KernelUpgrader { rvf_path: rvf.clone() };
+            let result = upgrader.upgrade(&kernel_path).await?;
+            println!("Kernel upgraded:");
+            println!("  from: {}", result.from_hash);
+            println!("  to:   {}", result.to_hash);
         }
         Commands::Kernel { rvf, action } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
