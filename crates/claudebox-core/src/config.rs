@@ -65,13 +65,12 @@ impl ClaudeBoxConfig {
         let path = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
             .join(".claudebox/config.toml");
-        if !path.exists() {
-            return Ok(Self::default());
+        match std::fs::read_to_string(&path) {
+            Ok(content) => toml::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(anyhow::anyhow!("failed to read {}: {e}", path.display())),
         }
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("failed to read config: {e}"))?;
-        toml::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))
     }
 
     /// Write to `~/.claudebox/config.toml`, creating directories if needed.

@@ -39,16 +39,28 @@ impl MigrationChain {
     }
 
     /// Applies all required migrations sequentially from `current_version` to latest.
+    ///
+    /// Errors if `current_version` is newer than what this binary supports, or if any
+    /// migrator fails. Version only advances after `m.migrate()` succeeds.
     pub fn migrate_to_latest(
         &self,
         _rvf_path: &std::path::Path,
         current_version: u8,
     ) -> anyhow::Result<u8> {
+        let latest = self.latest_version();
+        if current_version > latest {
+            anyhow::bail!(
+                "RVF schema version {current_version} is newer than this binary supports \
+                 (max {latest}); upgrade claudebox"
+            );
+        }
         let mut version = current_version;
         for m in &self.migrators {
             if m.from_version() == version {
-                // Phase 11: open RvfStore and call m.migrate(store) here.
-                // Full RvfStore integration deferred until rvf-runtime is wired.
+                // FIXME: open RvfStore and call m.migrate(store)? here before advancing.
+                // Until rvf-runtime is wired, this is a no-op stub — version advances
+                // without executing the migrator body. Do NOT ship this without fixing.
+                // m.migrate(store)?;
                 version = m.to_version();
                 tracing::info!(
                     "Applied migration v{} → v{}",
@@ -65,11 +77,12 @@ impl MigrationChain {
     }
 
     pub fn latest_version(&self) -> u8 {
+        const BASELINE_VERSION: u8 = 1;
         self.migrators
             .iter()
             .map(|m| m.to_version())
             .max()
-            .unwrap_or(1)
+            .unwrap_or(BASELINE_VERSION)
     }
 }
 
@@ -98,20 +111,18 @@ mod tests {
     }
 
     #[test]
-    fn test_check_and_migrate_auto_migrates_single_step() {
-        // Mock: version = latest - 1 (single step behind)
-        // With current stub, check_and_migrate returns Ok(()) for any path
-        // This test verifies the function signature exists and is callable
+    fn test_check_and_migrate_stub_returns_ok() {
+        // Stub returns Ok(()) for any path until rvf-runtime is wired.
+        // FIXME: replace with real assertions once check_and_migrate reads the RVF schema version.
         let result = check_and_migrate(std::path::Path::new("/tmp/test.rvf"), true);
-        // Stub returns Ok(()) — acceptable until rvf-runtime integration
-        assert!(result.is_ok() || result.is_err()); // always true
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn test_check_and_migrate_errors_on_multi_step_without_flag() {
-        // Same as above — stub behavior
+    fn test_check_and_migrate_no_auto_migrate_stub_returns_ok() {
+        // FIXME: once implemented, false should prevent minor auto-migration.
         let result = check_and_migrate(std::path::Path::new("/tmp/test.rvf"), false);
-        assert!(result.is_ok() || result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -139,5 +150,15 @@ mod tests {
     fn test_migration_chain_needs_migration_when_behind() {
         let chain = MigrationChain::new();
         assert!(chain.needs_migration(0));
+    }
+
+    #[test]
+    fn test_migrate_to_latest_errors_on_future_version() {
+        let chain = MigrationChain::new();
+        let future_version = chain.latest_version() + 10;
+        let result = chain.migrate_to_latest(std::path::Path::new("/tmp/test.rvf"), future_version);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("newer than this binary supports") || msg.contains("upgrade"));
     }
 }
