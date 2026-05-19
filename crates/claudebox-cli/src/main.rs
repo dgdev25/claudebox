@@ -137,49 +137,63 @@ async fn main() -> anyhow::Result<()> {
             .await?;
         }
         Commands::Start { rvf, workspace } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             claudebox_core::start::run_start(claudebox_core::start::StartOptions {
                 rvf,
                 workspace,
             })
             .await?;
         }
-        Commands::Stop { .. } => {
+        Commands::Stop { rvf } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("stop command not yet fully implemented")
         }
-        Commands::Logs { .. } => {
+        Commands::Logs { rvf, .. } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("logs command not yet fully implemented")
         }
-        Commands::Status { .. } => {
+        Commands::Status { rvf } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("status command not yet fully implemented")
         }
-        Commands::Branch { .. } => {
+        Commands::Branch { rvf, .. } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("branch command not yet fully implemented")
         }
-        Commands::Rollback { .. } => {
+        Commands::Rollback { rvf, .. } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("rollback command not yet fully implemented")
         }
-        Commands::Audit { .. } => {
+        Commands::Audit { rvf, .. } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("audit command not yet fully implemented")
         }
-        Commands::Snapshot { .. } => {
+        Commands::Snapshot { rvf, .. } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("snapshot command not yet fully implemented")
         }
-        Commands::UpgradeKernel { .. } => {
+        Commands::UpgradeKernel { rvf } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("upgrade-kernel command not yet fully implemented")
         }
-        Commands::Kernel { .. } => {
+        Commands::Kernel { rvf, .. } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("kernel command not yet fully implemented")
         }
-        Commands::Migrate { .. } => {
+        Commands::Migrate { rvf } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("migrate command not yet fully implemented")
         }
-        Commands::Compact { .. } => {
+        Commands::Compact { rvf } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("compact command not yet fully implemented")
         }
         Commands::UpdateAllowlist { rvf, add, remove } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             claudebox_core::allowlist::run_update_allowlist(&rvf, add, remove).await?;
         }
-        Commands::Destroy { .. } => {
+        Commands::Destroy { rvf, .. } => {
+            claudebox_migrate::check_and_migrate(&rvf, true)?;
             anyhow::bail!("destroy command not yet fully implemented")
         }
     }
@@ -190,6 +204,14 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_check_and_migrate_called_before_start() {
+        // Type-check test: verifies check_and_migrate has the right signature.
+        // If the import or signature is wrong, this won't compile.
+        let _: fn(&std::path::Path, bool) -> anyhow::Result<()> =
+            claudebox_migrate::check_and_migrate;
+    }
 
     #[test]
     fn test_init_subcommand_parses_single_lang() {

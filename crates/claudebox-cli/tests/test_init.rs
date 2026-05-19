@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 #[test]
 #[ignore = "requires rvf-cli, clang, docker"]
 fn test_init_single_language() {
