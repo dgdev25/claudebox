@@ -18,6 +18,8 @@ dirs = "5"
 toml = { workspace = true }
 rvf-runtime = { workspace = true }
 rvf-types = { workspace = true }
+claudebox-witness = { path = "../claudebox-witness" }
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { workspace = true }

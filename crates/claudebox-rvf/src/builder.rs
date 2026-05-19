@@ -1,6 +1,9 @@
 use std::path::Path;
 
 use claudebox_core::manifest::ClaudeBoxManifest;
+use claudebox_core::witness::{signing_key_path_for_rvf, witness_path_for_rvf};
+use claudebox_witness::writer::WitnessWriter;
+use claudebox_witness::WitnessEvent;
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 use rvf_runtime::options::RvfOptions;
@@ -95,11 +98,35 @@ impl ApplianceBuilder {
         anyhow::bail!("embed_ebpf not yet implemented — deferred to Phase 5 (eBPF pipeline)")
     }
 
-    /// Append a genesis witness entry — deferred to Phase 5 (witness chain).
-    pub fn write_genesis_witness(&self, _rvf_path: &Path) -> anyhow::Result<()> {
-        anyhow::bail!(
-            "write_genesis_witness not yet implemented — deferred to Phase 5 (witness chain)"
+    /// Write the genesis witness entry for a newly created appliance.
+    ///
+    /// Creates `<rvf_path>.witness` (JSONL) with a single signed `Boot` entry
+    /// and persists the Ed25519 seed to `<rvf_path>.key` so future sessions
+    /// can append chained entries. If the witness file already exists the call
+    /// is a no-op (idempotent).
+    pub fn write_genesis_witness(&self, rvf_path: &Path) -> anyhow::Result<()> {
+        let witness_path = witness_path_for_rvf(rvf_path);
+        if witness_path.exists() {
+            return Ok(());
+        }
+
+        let entry = WitnessWriter::create_genesis(
+            &self.signing_key,
+            WitnessEvent::Boot { project_id: self.manifest.project_id.clone() },
         )
+        .map_err(|e| anyhow::anyhow!("genesis witness failed: {e}"))?;
+
+        let json = serde_json::to_string(&entry)
+            .map_err(|e| anyhow::anyhow!("witness serialisation failed: {e}"))?;
+
+        std::fs::write(&witness_path, format!("{json}\n"))
+            .map_err(|e| anyhow::anyhow!("failed to write witness file: {e}"))?;
+
+        let key_path = signing_key_path_for_rvf(rvf_path);
+        std::fs::write(&key_path, self.signing_key.to_bytes())
+            .map_err(|e| anyhow::anyhow!("failed to write signing key: {e}"))?;
+
+        Ok(())
     }
 
     /// Verify the appliance at `rvf_path` via RvfStore (stub).
@@ -128,6 +155,7 @@ mod tests {
         WitnessPolicy,
     };
     use tempfile::tempdir;
+    use rvf_runtime::RvfStore;
 
     fn test_manifest() -> ClaudeBoxManifest {
         ClaudeBoxManifest {
@@ -153,6 +181,41 @@ mod tests {
             },
             witness: WitnessPolicy::default(),
         }
+    }
+
+    #[test]
+    fn test_write_genesis_witness_creates_witness_file() {
+        let dir = tempdir().unwrap();
+        let rvf = dir.path().join("test.rvf");
+        let builder = ApplianceBuilder::new(test_manifest()).unwrap();
+        builder.build_skeleton(&rvf, None).unwrap();
+        builder.write_genesis_witness(&rvf).unwrap();
+        let witness_path = witness_path_for_rvf(&rvf);
+        assert!(witness_path.exists(), "witness file should be created");
+    }
+
+    #[test]
+    fn test_write_genesis_witness_entry_is_valid_json() {
+        let dir = tempdir().unwrap();
+        let rvf = dir.path().join("test.rvf");
+        let builder = ApplianceBuilder::new(test_manifest()).unwrap();
+        builder.build_skeleton(&rvf, None).unwrap();
+        builder.write_genesis_witness(&rvf).unwrap();
+        let content = std::fs::read_to_string(witness_path_for_rvf(&rvf)).unwrap();
+        let _entry: claudebox_witness::WitnessEntry = serde_json::from_str(content.trim()).unwrap();
+    }
+
+    #[test]
+    fn test_write_genesis_witness_idempotent() {
+        let dir = tempdir().unwrap();
+        let rvf = dir.path().join("test.rvf");
+        let builder = ApplianceBuilder::new(test_manifest()).unwrap();
+        builder.build_skeleton(&rvf, None).unwrap();
+        builder.write_genesis_witness(&rvf).unwrap();
+        let first = std::fs::read_to_string(witness_path_for_rvf(&rvf)).unwrap();
+        builder.write_genesis_witness(&rvf).unwrap(); // second call is noop
+        let second = std::fs::read_to_string(witness_path_for_rvf(&rvf)).unwrap();
+        assert_eq!(first, second, "second write should be a noop");
     }
 
     #[test]

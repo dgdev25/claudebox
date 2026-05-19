@@ -10,7 +10,7 @@ pub type Hash32 = [u8; 32];
 /// Using Vec<u8> for serde compatibility; length invariant enforced by constructors.
 pub type Sig64 = Vec<u8>;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WitnessEntry {
     pub seq: u64,
     pub ts_nanos: u128,
@@ -40,7 +40,7 @@ mod serde_bytes_array {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WitnessEvent {
     Boot            { project_id: String },
     Shutdown        { reason: String },
@@ -60,6 +60,8 @@ pub enum WitnessEvent {
     VecReconcile    { files_removed: u32 },
     /// REMEDIATION BS-7: format migration tracking.
     FormatMigrate   { from_version: u8, to_version: u8 },
+    /// Allowlist domain update.
+    AllowlistUpdate { added: Vec<String>, removed: Vec<String> },
 }
 #[cfg(test)]
 mod tests {

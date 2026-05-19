@@ -1,4 +1,5 @@
 pub mod allowlist;
+pub mod witness;
 pub mod setup;
 pub mod config;
 pub mod git_hooks;
