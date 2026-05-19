@@ -21,6 +21,11 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
+port_check = { workspace = true }
+
+[[bin]]
+name = "claudebox-mcp"
+path = "src/bin/claudebox-mcp.rs"
 
 [dev-dependencies]
 tempfile = "3"

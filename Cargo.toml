@@ -31,6 +31,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 notify = "6"
-port-check = "0.2"
+port_check = "0.3"
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"
