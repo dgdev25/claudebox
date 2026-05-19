@@ -1,8 +1,11 @@
 use rvf_runtime::RvfStore;
 
 /// Trait implemented by each version-to-version migration step.
+#[allow(clippy::wrong_self_convention)]
 pub trait SegmentMigrator: Send + Sync {
+    /// Schema version this migrator reads from.
     fn from_version(&self) -> u8;
+    /// Schema version this migrator produces.
     fn to_version(&self) -> u8;
     fn migrate(&self, store: &mut RvfStore) -> anyhow::Result<()>;
 }
