@@ -98,11 +98,11 @@ pub fn build_manifest_from_opts(opts: &InitOptions) -> anyhow::Result<ClaudeBoxM
 
 /// Orchestrate the full `claudebox init` flow.
 ///
-/// Stub: parses the manifest and returns `Ok(())`. Full orchestration
-/// (kernel build / import, eBPF compile, appliance skeleton) is wired in Phase 4.
-pub async fn run_init(opts: InitOptions, _output_dir: &Path) -> anyhow::Result<()> {
-    let _manifest = build_manifest_from_opts(&opts)?;
-    Ok(())
+/// Stub: parses the manifest and returns it for the caller to use.
+/// Appliance file writing is handled by the CLI layer (which has access to
+/// both `claudebox-core` and `claudebox-rvf` without a circular dependency).
+pub async fn run_init(opts: InitOptions, _output_dir: &Path) -> anyhow::Result<ClaudeBoxManifest> {
+    build_manifest_from_opts(&opts)
 }
 
 #[cfg(test)]

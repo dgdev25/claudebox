@@ -103,7 +103,7 @@ impl FirecrackerVm {
             if UnixStream::connect(&self.socket_path).is_ok() {
                 return VmStatus::Running;
             }
-            return VmStatus::Stopped;
+            VmStatus::Stopped
         }
 
         // Non-Unix fallback: socket existence is the best we can do.

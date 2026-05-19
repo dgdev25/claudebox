@@ -40,7 +40,7 @@ impl ShutdownHook {
         let ts = chrono::Utc::now().to_rfc3339();
         let entries: Vec<HistoryEntry> = reader
             .lines()
-            .filter_map(|r| r.ok())
+            .map_while(Result::ok)
             .filter(|l| !l.trim().is_empty())
             .take(MAX_HISTORY_LINES)
             .map(|line| HistoryEntry {

@@ -125,16 +125,35 @@ async fn main() -> anyhow::Result<()> {
             allow,
             kernel_from,
         } => {
-            claudebox_core::init::run_init(
+            let output_dir = std::env::current_dir()?;
+            let manifest = claudebox_core::init::run_init(
                 claudebox_core::init::InitOptions {
                     name,
                     lang,
                     allow,
-                    kernel_from,
+                    kernel_from: kernel_from.clone(),
                 },
-                &std::env::current_dir()?,
+                &output_dir,
             )
             .await?;
+
+            let output_path = output_dir.join(format!("{}.rvf", manifest.project_name));
+            anyhow::ensure!(
+                !output_path.exists(),
+                "{} already exists — remove it before re-initialising",
+                output_path.display()
+            );
+
+            let builder = claudebox_rvf::builder::ApplianceBuilder::new(manifest)?;
+            builder.build_skeleton(&output_path, kernel_from.as_deref())?;
+
+            eprintln!("Created appliance: {}", output_path.display());
+            if kernel_from.is_none() {
+                eprintln!(
+                    "Note: no kernel embedded. Build one with Docker or supply \
+                     --kernel-from <bzImage> to enable `claudebox start`."
+                );
+            }
         }
         Commands::Start { rvf, workspace } => {
             claudebox_migrate::check_and_migrate(&rvf, true)?;
